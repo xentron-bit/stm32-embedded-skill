@@ -83,3 +83,133 @@ SECTIONS {
     .fast    (NOLOAD) : { *(.fast)    } > DTCM  /* ISR hot code */
 }
 ```
+
+---
+
+## Dynamic Memory — Ne Zaman Uygun?
+
+### Genel Kural
+
+```
+Hard-RT görevler (ISR, kontrol döngüsü, watchdog):    malloc YOK
+Init/startup aşaması (bir kez, boot sırasında):       GÜVENLİ
+Büyük + ara sıra kullanılan buffer'lar:               DÜŞÜN
+FreeRTOS/RTX5 RTOS task'ları:                         osMemoryPool tercih et
+```
+
+### Bellek Baskısı Durumunda Dynamic Allocation Öneri Kriterleri
+
+```
+RAM azalıyor (statik allocate > %80 RAM doldu) VE
+  ↓
+Aşağıdakilerden biri varsa dynamic allocation DÜŞÜNÜLEBİLİR:
+
+1. Büyük ama sürekli kullanılmayan buffer'lar:
+   - FatFS work area (4-8 KB) — sadece dosya işlemi süresince
+   - JPEG/PNG decode buffer — sadece decode sırasında
+   - USB host enum buffer — sadece enum sırasında
+   - Protocol TX packet buffer — sadece TX sırasında
+
+2. Sayısı çalışma zamanında belli olan struct'lar:
+   - CAN filter table — filtre sayısı config dosyasından geliyorsa
+   - Log record buffer — derinlik yapılandırılabilirse
+
+3. Opsiyonel/koşullu özellikler:
+   - Debug/trace buffer — yalnızca debug modda alloc et
+```
+
+### Güvenli Dynamic Allocation Örüntüleri
+
+```c
+/* ÖRÜNTÜ 1: Startup'ta bir kez alloc — asla free etme (statik gibi davran) */
+static uint8_t *fatfs_work;
+
+void storage_init(void)
+{
+    fatfs_work = malloc(FF_MAX_SS * 4);   /* 4 sektor buffer */
+    if (fatfs_work == NULL) {
+        /* Başlangıçta bile alloc başarısız → sistem kritik hata */
+        Error_Handler();
+    }
+    /* fatfs_work artık uygulama boyunca geçerli, asla free edilmez */
+}
+
+/* ÖRÜNTÜ 2: Kısa ömürlü büyük buffer — göreve özel */
+int32_t jpeg_decode_and_save(const uint8_t *jpeg, uint32_t jpeg_len)
+{
+    uint8_t *decode_buf = malloc(LCD_WIDTH * LCD_HEIGHT * 2);  /* 2 byte/pixel */
+    if (decode_buf == NULL) {
+        return -1;   /* hata — statik RAM yetmedi */
+    }
+
+    int32_t ret = jpeg_decode(jpeg, jpeg_len, decode_buf);
+    if (ret == 0) {
+        lcd_blit(decode_buf);
+    }
+
+    free(decode_buf);   /* decode bitti, geri ver */
+    return ret;
+}
+
+/* ÖRÜNTÜ 3: RTX5 / FreeRTOS memory pool — heap yerine tercih et */
+/* Sabit boyutlu bloklar → fragmentation yok */
+static osMemoryPoolId_t packet_pool;
+
+void comms_init(void)
+{
+    packet_pool = osMemoryPoolNew(8, sizeof(Packet_t), NULL);
+}
+
+Packet_t *comms_alloc_packet(void)
+{
+    return (Packet_t *)osMemoryPoolAlloc(packet_pool, 10U);  /* 10ms timeout */
+}
+
+void comms_free_packet(Packet_t *p)
+{
+    osMemoryPoolFree(packet_pool, p);
+}
+```
+
+### Dynamic Allocation — Tehlikeler ve Önlemler
+
+| Risk | Neden | Önlem |
+|------|-------|-------|
+| Fragmentation | Farklı boyutlarda alloc/free | Sabit boyutlu pool veya startup-only alloc |
+| malloc NULL kontrolü atlanır | Hafıza dolu → dereference crash | MUTLAKA NULL kontrolü — `if (!ptr) Error_Handler()` |
+| ISR içinde malloc | Heap mutex interrupt güvenli değil | ISR'da asla malloc |
+| RTOS task'ta malloc + FreeRTOS heap | configSUPPORT_DYNAMIC_ALLOCATION = 0 ise çalışmaz | RTX5: OS_DYNAMIC_MEM_SIZE = 0 → statik zorla |
+| free sonrası erişim (UAF) | Pointer sıfırlanmaz | `free(p); p = NULL;` |
+| Double free | Aynı pointer iki kez free | `p = NULL` sonrası; pool allocator ile imkansız |
+
+### Embedded Heap Alternatifleri
+
+```c
+/* 1. tlsf (Two-Level Segregated Fit) — O(1) malloc/free, az fragmentation */
+/* Kaynak: https://github.com/mattconte/tlsf */
+#include "tlsf.h"
+tlsf_t heap = tlsf_create_with_pool(heap_buf, sizeof(heap_buf));
+void *p = tlsf_malloc(heap, 256);
+tlsf_free(heap, p);
+
+/* 2. umm_malloc — küçük gömülü sistemler için */
+/* Kaynak: https://github.com/rhempel/umm_malloc */
+
+/* 3. FreeRTOS heap_4 — birleştiren (coallescing) heap */
+/* pvPortMalloc / vPortFree kullan, NOT malloc/free */
+void *p = pvPortMalloc(256);
+vPortFree(p);
+
+/* 4. STM32 HAL'de heap boyutu — startup_stm32xxx.s veya linker */
+/* _Min_Heap_Size = 0x400; → linker script'te arttır */
+```
+
+### Ne Zaman Static Zorla Kalın?
+
+```
+□ Hard real-time garanti (motor kontrol, güvenlik watchdog)
+□ < 32 KB RAM (statik profil her zaman deterministic)
+□ Endüstriyel sertifikasyon (IEC 61508, ISO 26262 — malloc yasaklı)
+□ RTOS_DYNAMIC_MEM_SIZE = 0 ile RTX5 heap'i kapalı ise
+□ Fragmentation analizi yapılamıyorsa (uzun süreli çalışma)
+```

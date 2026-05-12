@@ -41,11 +41,12 @@ Systematic workflow for production-grade STM32 firmware: constraints → archite
 
 **Memory map template (document in linker script comments):**
 ```
-Flash: 0x08000000 - Bootloader (48KB) / App (remainder)
-RAM:   0x20000000 - .data + .bss / Heap (if used) / Task stacks / DMA buffers (32B aligned)
-DTCM:  0x20000000 (H7) - ISR handlers, critical data, no-cache DMA buffers
-AXI:   0x24000000 (H7) - Large arrays, FatFS work area
-CCMRAM: 0x10000000 (F4/F7) - ISR code, no DMA capable
+Flash:  0x08000000 - Bootloader (48KB) / App (remainder)
+RAM:    0x20000000 - .data + .bss / Heap (if used) / Task stacks
+DTCM:   0x20000000 (H7) - ISR handlers, critical data — CPU ONLY, DMA CANNOT ACCESS
+AXI:    0x24000000 (H7) - DMA buffers (32B aligned), FatFS work area, large arrays
+D2SRAM: 0x30000000 (H7) - DMA1/DMA2 accessible (128KB D2S1 + 32KB D2S2)
+CCMRAM: 0x10000000 (F4/F7) - ISR code, fast data — NO DMA capable
 ```
 
 ---
@@ -154,20 +155,26 @@ HAL_SPI_TransmitReceive(&hspi1, &tx, rx, 1, HAL_MAX_DELAY);
 ### DMA Driver Pattern (cache-safe, M7)
 
 ```c
-// DMA RX buffer: must be 32-byte aligned (D-cache line on M7)
-ALIGN_32BYTES(static uint8_t rx_buf[DMA_BUF_SIZE]) __attribute__((section(".dma_buf")));
+// DMA buffer: 32-byte aligned, placed in AXI SRAM (NOT DTCM on H7)
+// DTCM (0x20000000) is CPU-only — DMA1/DMA2 cannot access it!
+__attribute__((section(".dma_buffer"), aligned(32)))
+static uint8_t rx_buf[DMA_BUF_SIZE];
+
+// Size formula: round up to 32-byte boundary — NEVER use (len + 32)
+#define DMA_CACHE_SIZE(n)  ((int32_t)(((n) + 31U) & ~31U))
 
 void dma_rx_complete_cb(DMA_HandleTypeDef *hdma)
 {
     // Invalidate cache BEFORE reading buffer (M7 D-cache)
-    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, DMA_BUF_SIZE);
+    // Wrong formula overshoots buffer → dirty adjacent data discarded → corruption at -O1+
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, DMA_CACHE_SIZE(DMA_BUF_SIZE));
     process_rx_data(rx_buf, DMA_BUF_SIZE);
 }
 
 void dma_tx_start(const uint8_t *data, size_t len)
 {
     // Clean cache BEFORE DMA reads buffer (M7 D-cache)
-    SCB_CleanDCache_by_Addr((uint32_t *)data, len);
+    SCB_CleanDCache_by_Addr((uint32_t *)data, DMA_CACHE_SIZE(len));
     HAL_UART_Transmit_DMA(&huart2, data, len);
 }
 ```
@@ -460,6 +467,8 @@ uint32_t get_addr(const Packet_t *p) {
 | Empty delay loop | Bekler | **Silinir** | DWT cycle counter |
 | ISR, LTO açık | Çalışır | **Kaybolur** | `--undefined=XYZ` |
 | Struct padding | Çalışır | **Layout yanlış** | `__attribute__((packed))` |
+| DMA cache boyut `n+32` | Çalışır | **Komşu veri bozulur** | `(n+31U)&~31U` kullan |
+| ISR flag/veri sırası | Çalışır | **Task boş veri okur** | `COMPILER_BARRIER()` ekle |
 
 #### Tanı Diagnostic Flags
 
@@ -474,16 +483,18 @@ CFLAGS += -fstack-usage      # .su dosyası — stack analizi
 #### Hızlı Kontrol: "-O0 çalışıyor, -Os bozuluyor"
 
 ```
-□ ISR ile paylaşılan değişken → volatile var mı?
+□ ISR ile paylaşılan değişken → volatile var mı? (ISR ring buffer index, flag, counter)
 □ M7 DMA → SCB_CleanDCache / SCB_InvalidateDCache çağrılıyor mu?
+□ DMA cache boyut formülü → (n+31U)&~31U mı, yoksa n+32 mi? ← FatFS killer bug
 □ Peripheral enable sonrası → __DSB() var mı?
-□ ISR/callback → __attribute__((used)) var mı?
+□ ISR/callback → __attribute__((used)) var mı? (Keil AC6 LTO tehlikesi)
 □ Type-pun (float↔uint) → memcpy veya union kullanılıyor mu?
 □ Struct protocol → __attribute__((packed)) + _Static_assert var mı?
-□ Sıra bağımlı op → COMPILER_BARRIER() var mı?
+□ ISR'da veri yaz → flag=1 → COMPILER_BARRIER() aralarında var mı?
+□ DMA buffer DTCM'de mi? → H7'de DMA erişemez, AXI SRAM'a taşı
 ```
 
-Detaylı örnekler: [ref-compiler-hardening.md](ref-compiler-hardening.md)
+Detaylı örnekler: [ref-compiler-hardening.md](ref-compiler-hardening.md) | Keil özellikleri: [ref-keil-armclang.md](ref-keil-armclang.md)
 
 ### Power Optimization
 
@@ -619,21 +630,48 @@ DMA: Toggle GPIO at DMA complete ISR entry/exit → measure transfer duration on
 
 Before declaring firmware "done for production":
 
+**Stability & Safety**
 - [ ] Watchdog enabled and multi-task checklist implemented
 - [ ] All ISRs under 2µs worst-case (measured with DWT)
 - [ ] Stack HWM < 70% for all tasks (measured, not estimated)
-- [ ] `arm-none-eabi-size` output documented; flash < 80% for OTA headroom
-- [ ] All peripheral error paths tested (timeout, bus error, sensor disconnect)
-- [ ] CAN message whitelist / filter enforced
 - [ ] Startup self-test: RAM, Flash CRC, peripheral ping
 - [ ] Brown-out detection configured (BOR level matches VDD min)
+- [ ] HardFault / MemManage handlers log stack frame before halting (not silent `while(1)`)
+
+**Memory & DMA (M7 specific)**
+- [ ] DMA buffers in AXI SRAM (0x24000000) — NOT DTCM on H7
+- [ ] DMA cache size formula: `(n+31U)&~31U` — NOT `n+32`
+- [ ] All DMA buffers 32-byte aligned; section in scatter/linker script
+- [ ] `SCB_CleanDCache_by_Addr` before TX DMA; `SCB_InvalidateDCache_by_Addr` after RX DMA
+- [ ] `volatile` audit: every `static` modified in ISR reviewed
+- [ ] ISR-to-task flag pattern: `COMPILER_BARRIER()` between data write and flag=1
+
+**Keil AC6 Specific**
+- [ ] All HAL callback overrides have `__attribute__((used))` — LTO protection
+- [ ] FDCAN Init.Mode checked: `BUS_MONITORING` vs `NORMAL` — OBD/UDS needs NORMAL
+- [ ] Every ISR handler: peripheral name in function matches peripheral in LL/HAL calls
+- [ ] RTX5 mutexes: `osMutexPrioInherit` attribute set
+- [ ] RTX5 threads: static stack (`stack_mem` not NULL)
+- [ ] `osMutexAcquire` timeout value intentional: `0U` = non-blocking, not "forever"
+- [ ] NVIC priority grouping: `NVIC_PRIORITYGROUP_4` set before RTOS start
+
+**Protocol & Communication**
+- [ ] CAN message whitelist / filter enforced
+- [ ] All peripheral timeouts set (never `HAL_MAX_DELAY` on I2C/SPI/UART)
+- [ ] FDCAN bus-off recovery: manual decision, not automatic
+- [ ] USART overrun errors (ORE) handled — uncleared ORE causes interrupt storm
+
+**Build & Release**
+- [ ] `arm-none-eabi-size` output documented; flash < 80% for OTA headroom
+- [ ] Compiler flags: `-Wall -Wextra -Werror -Wcast-align` enabled in CI
 - [ ] RDP level set appropriately for production
 - [ ] Bootloader / OTA: dual-bank or A/B with rollback
+
+**Debug & Verification**
 - [ ] XIP debug verified: attach/detach cycle does not corrupt state
 - [ ] EMC: all GPIOs with appropriate slew rate and pull configuration
 - [ ] Power: measured average current in all operating modes
-- [ ] `volatile` audit: every `static` modified in ISR reviewed
-- [ ] Compiler flags: `-Wall -Wextra -Werror` enabled in CI
+- [ ] All peripheral error paths tested (timeout, bus error, sensor disconnect)
 
 ---
 

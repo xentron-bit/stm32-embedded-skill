@@ -395,6 +395,199 @@ my_struct_t* p = malloc(sizeof(my_struct_t)); /* Çalışır ama bağımlı */
 
 ---
 
+## memcpy — Güvenli Kullanım Kuralları
+
+```c
+/* KURAL 1: Her zaman hedef boyutunu kontrol et */
+
+/* YANLIŞ — taşma garantili */
+memcpy(dest_buf, src, recv_len);
+
+/* DOĞRU */
+if (recv_len > sizeof(dest_buf)) {
+    log_error(ERR_OVERFLOW);
+    return -1;
+}
+memcpy(dest_buf, src, recv_len);
+
+/* KURAL 2: Kaynak NULL kontrolü */
+if (src == NULL || dest == NULL) { return -1; }
+memcpy(dest, src, len);
+
+/* KURAL 3: Örtüşen bölge için memmove kullan */
+/* memcpy ile örtüşen bölge: undefined behavior */
+/* YANLIŞ */
+memcpy(buf + 2, buf, 10);          /* örtüşüyor — UB */
+/* DOĞRU */
+memmove(buf + 2, buf, 10);         /* örtüşmeyi doğru yönetir */
+
+/* KURAL 4: Protocol çerçevesi — sabit boyut kontrolü */
+typedef struct __attribute__((packed)) {
+    uint8_t  cmd;
+    uint16_t len;
+    uint8_t  data[MAX_PAYLOAD];
+} Frame_t;
+
+void parse_frame(const uint8_t *raw, uint16_t raw_len)
+{
+    /* Minimum başlık kontrolü */
+    if (raw_len < offsetof(Frame_t, data)) {
+        return;   /* header bile gelişmedi */
+    }
+    /* Payload boyut kontrolü */
+    uint16_t payload_len;
+    memcpy(&payload_len, &raw[1], 2);   /* misaligned read güvenli — memcpy ile */
+    if (payload_len > MAX_PAYLOAD || (offsetof(Frame_t, data) + payload_len) > raw_len) {
+        return;   /* menzil dışı */
+    }
+    Frame_t frame;
+    memcpy(&frame, raw, offsetof(Frame_t, data) + payload_len);
+}
+```
+
+### memcpy Tehlike Tablosu
+
+| Durum | Risk | Çözüm |
+|-------|------|-------|
+| `memcpy(dst, src, user_len)` | Heap/stack taşması | `user_len > sizeof(dst)` kontrolü |
+| `memcpy(buf + offset, src, n)` | `offset + n > buf_size` | İkisini birlikte kontrol et |
+| `memcpy` sonrası dizi erişimi | Index dst_len'den büyük | Sadece kopyalanan `n` byte'a eriş |
+| protocol field okuma | misaligned UB | `memcpy` veya `__packed` struct |
+| `recv_len` negatif/wrap | `uint16_t`: 65535 → 0 overflow | unsigned comparison, `> sizeof` |
+
+---
+
+## Index Sınır Aşımı Analizi
+
+### Yaygın Örüntüler ve Önlemler
+
+```c
+/* ÖRÜNTÜ 1: Dizi dizinine doğrudan DMA/CAN verisi kullanma */
+void process_can_frame(const uint8_t *data)
+{
+    uint8_t table_idx = data[0];         /* YANLIŞ: kontrol yok */
+    uint32_t val = lookup_table[table_idx];  /* → OOB read */
+
+    /* DOĞRU */
+    if (data[0] >= ARRAY_SIZE(lookup_table)) {
+        return;   /* geçersiz index */
+    }
+    uint32_t val = lookup_table[data[0]];
+}
+
+/* ÖRÜNTÜ 2: Ring buffer index overflow */
+typedef struct {
+    uint8_t  buf[RING_BUF_SIZE];       /* power-of-2 boyut zorunlu */
+    uint32_t head;
+    uint32_t tail;
+} ring_buf_t;
+
+/* DOĞRU — mask ile güvenli index */
+#define RING_BUF_SIZE 256U              /* 2^8 — mask çalışır */
+#define RING_MASK     (RING_BUF_SIZE - 1U)
+
+static inline void ring_push(ring_buf_t *r, uint8_t b)
+{
+    uint32_t next_head = (r->head + 1U) & RING_MASK;
+    if (next_head == r->tail) { return; }   /* dolu */
+    r->buf[r->head & RING_MASK] = b;
+    r->head = next_head;
+}
+
+/* ÖRÜNTÜ 3: Yineleyici taşması — off-by-one */
+uint8_t buf[16];
+for (size_t i = 0; i <= 16; i++) {    /* YANLIŞ — i=16 OOB */
+    buf[i] = 0;
+}
+for (size_t i = 0; i < 16; i++) {     /* DOĞRU — < değil <= */
+    buf[i] = 0;
+}
+
+/* ÖRÜNTÜ 4: Negatif index — imzalı/imzasız karışımı */
+int32_t offset = get_offset();         /* -1 döndürebilir */
+uint8_t val = buf[offset];             /* offset negatifse → OOB */
+
+/* DOĞRU */
+if (offset < 0 || (uint32_t)offset >= sizeof(buf)) { return; }
+uint8_t val = buf[(uint32_t)offset];
+
+/* ÖRÜNTÜ 5: Çarpımda overflow — büyük indeks hesabı */
+uint32_t row = user_row;
+uint32_t col = user_col;
+uint32_t idx = row * COLS + col;      /* YANLIŞ: row*COLS overflow edebilir */
+
+/* DOĞRU */
+if (row >= ROWS || col >= COLS) { return; }
+uint32_t idx = row * COLS + col;   /* artık güvenli */
+```
+
+### Statik Analiz için Kontrol Listesi
+
+```
+□ Dizi boyutu ARRAY_SIZE(arr) macro ile doğrulandı mı?
+□ Harici (CAN/UART) veri index olarak kullanılıyor → kontrol var mı?
+□ Ring buffer: head/tail hiç negatif olabilir mi? (signed overflow riski)
+□ Loop: < mi, <= mi? Off-by-one var mı?
+□ İmzalı + imzasız karışımı var mı? (int offset → uint index)
+□ Çarpım öncesi bireysel sınır kontrolü yapıldı mı?
+□ memcpy len: kullanıcı/dış veriden geliyor → taşma kontrolü
+□ Struct pointer casting: packed olmayan struct field'a memcpy mi?
+```
+
+---
+
+## Timeout Kontrol Örüntüleri
+
+```c
+/* KURAL: Her peripheral çağrısında bounded timeout */
+
+/* Genel timeout guard makrosu */
+#define PERIPHERAL_TIMEOUT_MS   10U
+
+/* I2C */
+if (HAL_I2C_Master_Transmit(&hi2c1, addr, buf, len,
+                              PERIPHERAL_TIMEOUT_MS) != HAL_OK) {
+    /* Hata işle — sonsuz bloklama değil */
+    handle_i2c_error();
+    return -1;
+}
+
+/* SPI */
+if (HAL_SPI_TransmitReceive(&hspi1, tx, rx, len,
+                              PERIPHERAL_TIMEOUT_MS) != HAL_OK) {
+    handle_spi_error();
+    return -1;
+}
+
+/* DMA tamamlanma — semaphore timeout */
+if (osSemaphoreAcquire(dma_done_sem, 50U) != osOK) {
+    /* DMA timeout — DMA reset gerekebilir */
+    HAL_DMA_Abort(&hdma_spi_rx);
+    return -1;
+}
+
+/* Busy-wait gereken durum — timeout döngüsü */
+uint32_t t0 = HAL_GetTick();
+while (!is_device_ready()) {
+    if ((HAL_GetTick() - t0) >= 100U) {   /* 100ms timeout */
+        return -1;   /* cihaz yanıt vermiyor */
+    }
+}
+
+/* UYARI: uint32_t wraparound güvenli — t0 > HAL_GetTick() olsa bile
+ * (HAL_GetTick() - t0) unsigned wrap ile doğru farkı verir
+ * (49.7 gün her ~2^32 ms, pratik sorun değil) */
+
+/* RTOS context'te busy-wait yasak — yield et */
+uint32_t deadline = osKernelGetTickCount() + 100U;
+while (!is_device_ready()) {
+    if (osKernelGetTickCount() >= deadline) { return -1; }
+    osDelay(1U);   /* scheduler'ı serbest bırak */
+}
+```
+
+---
+
 ## Özet Kontrol Listesi
 
 ```
@@ -422,4 +615,12 @@ my_struct_t* p = malloc(sizeof(my_struct_t)); /* Çalışır ama bağımlı */
 □ ISR shared vars: volatile
 □ Timeout: HAL_MAX_DELAY yok — her zaman bounded
 □ Magic number yok — macro kullan
+□ memcpy öncesi: hedef boyutu, NULL, taşma kontrolü yapıldı mı?
+□ Dış veri (CAN/UART) dizi indexi olarak: menzil kontrolü yapıldı mı?
+□ Ring buffer: RING_MASK ile güvenli mi, power-of-2 boyut mu?
+□ Loop: < mı, <= mı? Off-by-one analiz edildi mi?
+□ İmzalı index → imzasız dizi: negatif kontrol var mı?
+□ Her peripheral HAL çağrısında timeout < HAL_MAX_DELAY
+□ Busy-wait: timeout döngüsü var mı?
+□ RTOS context busy-wait: osDelay ile yield mi?
 ```

@@ -8,10 +8,31 @@ A comprehensive Claude Code skill for STM32 embedded systems development coverin
 |------|-------------|
 | [SKILL.md](SKILL.md) | Main skill — 5-phase workflow, RTOS patterns, peripheral drivers, code review checklist |
 | [stm32-families.md](stm32-families.md) | Complete STM32 family catalog with HAL repos, CMSIS device links, Keil RTX5 config |
+| **Drivers & Protocols** | |
 | [ref-communication-protocols.md](ref-communication-protocols.md) | I2C, SPI DMA, UART ring buffer, FDCAN patterns |
+| [ref-uds-iso14229.md](ref-uds-iso14229.md) | ISO 14229 UDS protocol: services, session management, NRC codes, STM32 FDCAN |
+| [ref-j1939.md](ref-j1939.md) | SAE J1939 protocol: PGN structure, address claiming, transport protocol, STM32 FDCAN |
+| [ref-modbus-rtu.md](ref-modbus-rtu.md) | Modbus RTU over UART/RS-485: frame format, CRC, master/slave state machines |
+| [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB Host (MSC), FatFS integration, SDMMC, common pitfalls |
+| [ref-adc-timer.md](ref-adc-timer.md) | ADC (injected/regular/DMA), timer PWM, input capture, encoder patterns |
+| **RTOS** | |
 | [ref-rtos-patterns.md](ref-rtos-patterns.md) | FreeRTOS periodic tasks, ISR→task, mutex, event groups, stack monitoring |
+| [ref-keil-armclang.md](ref-keil-armclang.md) | Keil MDK / AC6: LTO traps, scatter file, RTX5 pitfalls (13 categories), FDCAN mode, NVIC |
+| **Memory & Optimization** | |
+| [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pools, packed structs, ring buffer, linker script, dynamic alloc guidance |
 | [ref-power-optimization.md](ref-power-optimization.md) | Sleep/Stop modes, dynamic clock scaling, peripheral gating, battery-adaptive |
-| [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pools, packed structs, ring buffer, linker script |
+| **Safety & Hardening** | |
+| [ref-compiler-hardening.md](ref-compiler-hardening.md) | Optimizer bug prevention: volatile, barriers, DMA cache size formula, ISR reorder, LTO |
+| [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault register dump, BusFault/MemManage decode, reset cause detection, noinit persist |
+| [ref-mpu-trustzone.md](ref-mpu-trustzone.md) | MPU stack guard, null-pointer trap, non-cacheable DMA region, peripheral access control |
+| [ref-trustzone.md](ref-trustzone.md) | TrustZone-M (STM32L5/U5/H5): SAU, GTZC, NSC, CMSE, secure boot chain |
+| **System** | |
+| [ref-boot-clock.md](ref-boot-clock.md) | Clock tree, PLL config, HSE/HSI, bootloader entry, option bytes |
+| [ref-iap-ota.md](ref-iap-ota.md) | In-Application Programming, dual-bank OTA, bootloader design, CRC verify |
+| **Low-level** | |
+| [ref-arm-asm.md](ref-arm-asm.md) | Thumb-2 assembly: registers, AAPCS, LDREX/STREX, HardFault decode, startup code |
+| **Code Quality** | |
+| [ref-c-code-style.md](ref-c-code-style.md) | MaJerle C style, naming, types, memcpy safety, bounds checking, timeout patterns |
 
 ## Features
 

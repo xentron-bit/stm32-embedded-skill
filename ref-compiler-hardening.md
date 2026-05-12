@@ -97,7 +97,8 @@ volatile bool ready = true;
 void dma_tx_start(uint8_t *data, uint32_t len)
 {
     /* 1. Önce cache'i SRAM'a yaz */
-    SCB_CleanDCache_by_Addr((uint32_t *)data, len);
+    /* DOĞRU boyut formülü: (len + 31) & ~31 — 32-byte hizalı yukarı yuvarlama */
+    SCB_CleanDCache_by_Addr((uint32_t *)data, (int32_t)((len + 31U) & ~31U));
     __DSB();
     /* 2. Sonra DMA başlat — SRAM güncel */
     HAL_SPI_Transmit_DMA(&hspi, data, len);
@@ -107,7 +108,9 @@ void dma_tx_start(uint8_t *data, uint32_t len)
 void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     /* Cache'i geçersiz kıl — bir sonraki CPU okuma SRAM'dan gelsin */
-    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, sizeof(rx_buf));
+    /* DOĞRU boyut formülü — aşağıya bakın */
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf,
+                                  (int32_t)((sizeof(rx_buf) + 31U) & ~31U));
     process(rx_buf);
 }
 
@@ -121,16 +124,44 @@ ALIGN_32BYTES(uint8_t rx_buf[RX_SIZE]) __attribute__((section(".dma_buf")));
 /* Bu durumda Clean/Invalidate çağrısı GEREKMEZ */
 ```
 
+### ⚠️ Cache Boyut Formülü — Kritik Hata Kaynağı
+
+```c
+/* YANLIŞ — buffer sınırını 32 byte aşar, komşu veriyi bozar */
+SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, total + 32);
+
+/* DOĞRU — 32-byte sınırına yukarı yuvarlama */
+SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, (int32_t)((total + 31U) & ~31U));
+
+/*
+ * Neden fark eder?
+ * SCB_InvalidateDCache_by_Addr DCIMVAC komutu kullanır.
+ * DCIMVAC: dirty (kirli) cache line'ı write-back YAPMADAN atar.
+ * Formül hatalıysa komşu dirty cache line da geçersiz kılınır →
+ * o line'daki CPU verisi (ör: FatFS iç tabloları) SRAM'a yazılmadan kaybolur.
+ *
+ * Neden -O0'da çalışır, -O1/-O2'de bozulur?
+ * -O0: Optimizasyon yok → az dirty cache line → komşu line büyük olasılıkla clean
+ * -O1+: Daha agresif veri yükleme → komşu dirty line → DCIMVAC o veriyi siler
+ *
+ * Gerçek örnek: AT25SF128A_ReadSector() — total = 4096 + 4 = 4100 byte
+ *   Hatalı: total + 32 = 4132 → 130 cache line = 4160 byte → 32 byte taşma
+ *   Doğru:  (4100 + 31) & ~31 = 4128 byte → 132 cache line = tam 32-byte sınırı
+ */
+```
+
 ### Linker Script: DMA Buffer Bölümü
 
 ```ld
-/* STM32H7: DMA erişemez DTCM'ye — AXI SRAM veya D2 SRAM kullan */
+/* STM32H7: DMA erişemez DTCM'ye (0x20000000) — AXI SRAM veya D2 SRAM kullan */
+/* DTCM yalnızca CPU tarafından TCM veri yolu üzerinden erişilebilir */
 .dma_buf (NOLOAD) :
 {
     . = ALIGN(32);
     *(.dma_buf)
     . = ALIGN(32);
-} >RAM_D2   /* H7: D2 domain SRAM — DMA1/2 erişebilir */
+} >RAM_D2   /* H7: D2 domain SRAM (0x30000000) — DMA1/2 erişebilir */
+/* Keil scatter: RW_DMA 0x24000000 { *(.dma_buffer) }  ← AXI SRAM */
 ```
 
 ---
@@ -255,6 +286,128 @@ uint32_t get_addr(const Packet_t *p)
 | Struct aliasing | Çalışır | Çalışır | Bozulur | `memcpy` veya `union` |
 | Empty delay loop | Bekler | Silinir | Silinir | `__attribute__((optimize("O0")))` |
 | ISR pointer, volatile yok | Çalışır | Çalışır | Kaybolur | `volatile` ekle |
+| DMA cache boyut `n+32` | Çalışır | **Komşu veri bozulabilir** | **Bozulur** | `(n+31)&~31` formülü |
+| ISR'da flag önce yazılır | Çalışır | **Bozulabilir** | **Bozulur** | `COMPILER_BARRIER()` ekle |
+
+---
+
+## Kategori 8: DMA Cache Boyut Formülü Hatası
+
+**Semptom:** Büyük DMA transferlerinde (>~4KB) -O1/-O2'de veri bozulması. -O0'da her şey normal. FatFS, USB, Ethernet gibi protokol katmanlarında "sonraki işlem" bozulur — mevcut transfer başarılı görünür ama sonraki read/write hata verir.
+
+**Neden:** `SCB_InvalidateDCache_by_Addr` / `SCB_CleanDCache_by_Addr` boyut parametresi yanlışsa komşu cache line'ı da etkiler.
+
+```c
+/* YANLIŞ — 32 eklemek kavramsal olarak mantıklı görünür ama hatalıdır */
+SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, total + 32);
+/*
+ * total = 4100 → total + 32 = 4132
+ * 4132 / 32 = 129.125 → ceiling → 130 cache line → 4160 byte taranır
+ * Buffer = 4128 byte → 4160 - 4128 = 32 byte aşılır
+ * O 32 byte, buffer'ın hemen ardındaki veri — ör. FatFS internal buffer
+ * DCIMVAC dirty line'ı write-back yapmadan atar → FatFS verisi kaybolur
+ */
+
+/* DOĞRU — 32-byte sınırına kadar yukarı yuvarla */
+SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, (int32_t)((total + 31U) & ~31U));
+/*
+ * total = 4100 → (4100 + 31) & ~31 = 4131 & 0xFFFFFFE0 = 4128
+ * 4128 / 32 = 129 cache line — buffer sınırına tam oturur
+ */
+
+/* Aynı formül Clean için de geçerli */
+SCB_CleanDCache_by_Addr((uint32_t *)tx_buf, (int32_t)((total + 31U) & ~31U));
+```
+
+**Kural:**
+```c
+/* Her zaman kullan — hem Clean hem Invalidate için */
+#define DMA_CACHE_SIZE(n)  ((int32_t)(((n) + 31U) & ~31U))
+
+SCB_CleanDCache_by_Addr((uint32_t *)tx_buf, DMA_CACHE_SIZE(tx_len));
+SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, DMA_CACHE_SIZE(rx_len));
+```
+
+**-O0 neden çalışır?**
+- -O0: Compiler tüm değişkenleri register'a almaz → SRAM'a sık yazar → dirty cache line sayısı az
+- Komşu 32-byte slot büyük ihtimalle clean → DCIMVAC etkisiz
+- -O1+: Daha agresif register kullanımı → daha fazla dirty line → komşu slot da dirty → DCIMVAC siler → bozulma
+
+---
+
+## Kategori 9: ISR İçinde Veri/Flag Yeniden Sıralama
+
+**Semptom:** ISR'dan task'a veri aktarımı -O2'de bozulmuş veri üretiyor. Flag=1 set ediliyor ama task okuyunca veri henüz hazır değil.
+
+**Neden:** Compiler -O2'de `flag = 1` atamasını `memcpy(buf, data, len)` öncesine taşıyabilir — ikisi arasında bağımlılık görmez.
+
+```c
+/* YANLIŞ — ISR'da flag veri yazmadan önce set edilebilir */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    memcpy(shared.data, dma_rx_buf, DMA_LEN);  /* 1 */
+    shared.flag = 1;                            /* 2 — compiler 1 ve 2'yi yer değiştirebilir! */
+}
+
+void rx_task(void *arg)
+{
+    if (shared.flag) {
+        process(shared.data);   /* veri henüz hazır olmayabilir */
+        shared.flag = 0;
+    }
+}
+
+/* DOĞRU — COMPILER_BARRIER veri yazma ile flag arasına girer */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    memcpy(shared.data, dma_rx_buf, DMA_LEN);
+    __asm__ volatile("" ::: "memory");  /* COMPILER_BARRIER: yazmaları tamamla */
+    shared.flag = 1;
+}
+
+/* Flag da volatile olmalı — aksi halde task okuma optimize edilir */
+volatile uint8_t flag;
+```
+
+**ISR → Task güvenli aktarım pattern:**
+
+```c
+/* En güvenli: RTOS primitive kullan — hem barrier hem volatile hem sinyal */
+
+/* RTX5 / CMSIS-RTOS2 */
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    /* Cache invalidate ÖNCE — ardından task'a sinyal */
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, DMA_CACHE_SIZE(rx_len));
+    osEventFlagsSet(spi_events, EVENT_RX_DONE);  /* barrier etkisi var */
+}
+
+/* FreeRTOS */
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, DMA_CACHE_SIZE(rx_len));
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(rx_task_handle, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+```
+
+**Ring buffer index volatile zorunluluğu:**
+
+```c
+/* ISR'da yazılan, task'ta okunan her index/counter volatile olmalı */
+static volatile uint8_t rx_head = 0;  /* ISR yazar */
+static          uint8_t rx_tail = 0;  /* Task okur/yazar */
+
+/* ISR */
+void CAN_RxFifo0MsgPendingCallback(FDCAN_HandleTypeDef *hfdcan)
+{
+    HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &hdr, buf);
+    can_ring[rx_head] = ...; /* veri yaz */
+    __asm__ volatile("" ::: "memory");
+    rx_head = (rx_head + 1) % CAN_RING_SIZE;  /* volatile write */
+}
+```
 
 ---
 
