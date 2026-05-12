@@ -4,7 +4,10 @@
       "Edit(~/.claude/skills/stm32-embedded-dev/**)",
       "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev log --all --oneline --name-only)",
       "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev remote -v)",
-      "Bash(git branch *)"
+      "Bash(git branch *)",
+      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev log --all -p)",
+      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev show HEAD:README.md)",
+      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev push origin main --force)"
     ]
   }
 }

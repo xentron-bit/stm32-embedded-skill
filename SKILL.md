@@ -652,9 +652,105 @@ Before declaring firmware "done for production":
 
 ---
 
+## Pre-Review: Code Map + Context Interview
+
+**Do this before opening the Code Review Checklist.** Skipping this step produces false positives — flagging intentional embedded optimizations as bugs.
+
+### Step 1 — Generate the Code Map
+
+Run before reviewing any `.c` file. The map reveals call depth, shared variables, and include chains that are invisible from a single file.
+
+```bash
+# Keil project (UV4 available)
+python3 c_codemap_gen.py --build keil --uv4 auto
+
+# Keil project (no UV4 — XML parse)
+python3 c_codemap_gen.py --build keil
+
+# CMake project
+python3 c_codemap_gen.py --build cmake
+
+# Then load into review
+# claude --context .codemap/summary.md "Review uart.c"
+```
+
+The `.codemap/summary.md` index gives function call chains and include dependencies. Read it first — many "missing null checks" are actually dead code paths that never execute given the call graph.
+
+### Step 2 — Context Interview (ask before flagging anything)
+
+Embedded code that looks wrong is often intentionally simplified because the developer owns both sides of the system. Ask these questions **before** raising any finding:
+
+#### Communication / Protocol
+- **"Bu iki uç arasındaki protokolü sen mi yazıyorsun?"** (Do you own both sides of this protocol?)  
+  → If yes: fixed packet sizes, known baud rate, zero invalid frames → buffer overflow guards may be intentionally omitted.
+- **"Alıcı taraf paketin max boyutunu biliyor mu?"** (Does the receiver know the max packet size?)  
+  → If yes: `rx_len < BUF_SIZE` checks may be intentional omissions, not bugs.
+- **"Paket formatı değişebilir mi ileride?"** (Can the packet format change later?)  
+  → If no: no need for length-field validation — flag as NOTE only.
+
+#### Buffer Sizing
+- **"Bu buffer boyutu nasıl hesaplandı?"** (How was this buffer size calculated?)  
+  → Owner-controlled protocols: buffer = max packet × 1 (no margin needed if protocol is fixed)  
+  → Third-party protocol (Modbus, CANopen, USB): buffer must handle all legal frames + error recovery.
+
+#### Timing / Polling
+- **"Bu polling döngüsü başka bir iş parçacığıyla yarışıyor mu?"** (Does this polling loop race with another thread?)  
+  → Single-threaded bare-metal: `volatile` flags without critical section may be fine.  
+  → RTOS: same pattern is a bug.
+
+#### Error Handling
+- **"Bu HAL_ERROR durumu gerçekte hiç olabilir mi bu donanımda?"** (Can this HAL_ERROR actually occur on this hardware?)  
+  → If the bus is on-board and cannot be disconnected: ignoring HAL_ERROR may be intentional cost reduction.  
+  → If the bus reaches a connector exposed to the field: ignoring is always a bug.
+
+#### Watchdog / Resets
+- **"Bu sistem field'da kesintisiz çalışacak mı?"** (Will this system run unattended in the field?)  
+  → Lab/bench prototype: watchdog omission is acceptable.  
+  → Production/field: watchdog is mandatory regardless of developer confidence.
+
+### Step 3 — Classify Findings
+
+After the context interview, classify every finding into one of three buckets:
+
+| Bucket | Meaning | Action |
+|--------|---------|--------|
+| **Bug** | Would fail in the stated operating conditions | Raise as CRITICAL/HIGH |
+| **Intentional simplification** | Developer owns both ends, conditions are controlled | Document assumption, raise as NOTE only |
+| **Latent risk** | Correct now, breaks if system evolves | Raise as MEDIUM with specific trigger condition |
+
+**Never flag an intentional simplification as a bug.** Ask first.
+
+### Intentional Simplification Examples
+
+```c
+// LOOKS LIKE: missing overflow check
+void uart_rx_callback(uint8_t byte) {
+    rx_buf[rx_idx++] = byte;   // no bounds check
+}
+// IS ACTUALLY FINE IF: developer controls transmitter, packet is fixed 8 bytes,
+// buffer is 64 bytes, and rx_idx is reset after each packet.
+// RAISE AS: NOTE — "Add assert(rx_idx < sizeof(rx_buf)) for defensive coding"
+
+// LOOKS LIKE: HAL_ERROR ignored
+HAL_SPI_Transmit(&hspi1, buf, len, 1);
+// IS ACTUALLY FINE IF: SPI slave is on the same PCB (no connector, no unplug).
+// RAISE AS: MEDIUM — "Add error counter for production telemetry"
+
+// LOOKS LIKE: missing CRC validation
+void process_frame(uint8_t *frame, uint16_t len) {
+    uint8_t cmd = frame[0];
+    // no CRC check
+}
+// IS ACTUALLY FINE IF: UART hardware CRC is enabled in peripheral config,
+// or the two MCUs share the same ground plane and EMI is controlled.
+// RAISE AS: MEDIUM — "Document that hardware CRC is relied upon"
+```
+
+---
+
 ## Code Review Checklist (MANDATORY after every implementation)
 
-Apply to every `.c`/`.h` file written or modified. Check each category — do not skip any.
+Apply to every `.c`/`.h` file written or modified. Complete the Pre-Review context interview first. Check each category — do not skip any.
 
 ### 1. Volatile / Memory Visibility
 
@@ -757,6 +853,71 @@ Apply to every `.c`/`.h` file written or modified. Check each category — do no
 
 ---
 
+## Diagnostic Session — Problem Solving Q&A
+
+When the user reports a firmware bug or unexpected behavior, follow this structured diagnostic workflow. Ask clarifying questions before proposing solutions. Never guess the cause without data.
+
+### Step 1: Establish the symptom precisely
+
+Ask:
+- "What exactly is the observed behavior?" (crash, wrong value, hang, corrupt data, missing interrupt?)
+- "When does it happen?" (always, intermittently, after N hours, only at high load?)
+- "What changed before it appeared?" (new peripheral, optimization level, RTOS, clock config?)
+- "Does it reproduce at -O0 but not -Os, or vice versa?"
+
+### Step 2: Narrow by category
+
+Based on symptom, immediately classify and ask targeted follow-up:
+
+| Symptom | Ask |
+|---------|-----|
+| Crash → HardFault | "Do you have a HardFault handler that dumps CFSR/SP? What are the values?" |
+| Wrong data from peripheral | "Are you on M7? Is the DMA buffer cache-cleaned/invalidated?" |
+| Code works at -O0, breaks at -Os | "Is there a `volatile` missing on the ISR-shared variable?" |
+| Peripheral freezes after first error | "Is there a recovery / re-init on HAL_ERROR return?" |
+| ISR never fires | "Is NVIC priority set? Is the interrupt globally enabled? Is the IRQ flag cleared?" |
+| Task never unblocks | "Is the semaphore/event given from ISR using FromISR variant and portYIELD_FROM_ISR?" |
+| CAN frames lost | "What is FIFO fill level? Is there an ORE/overrun flag set? Is bus load > 75%?" |
+| Watchdog reset in field | "Which task is blocking? Is IWDG fed from multi-task checklist or single task?" |
+| Random corruption | "Are DMA and CPU sharing the same buffer? Is there cache coherency (M7)?" |
+| USB disconnect/reconnect | "Is the VBUS detection correct? Is USB enumeration completing (CDC gets port)?" |
+
+### Step 3: Request evidence
+
+Never diagnose blind. Ask for:
+- `arm-none-eabi-objdump -d build/firmware.elf | grep <function>` — assembly check
+- CFSR + SP dump from HardFault handler
+- Logic analyzer capture (I2C/SPI/CAN/UART)
+- DWT cycle count from ISR timing check
+- `uxTaskGetStackHighWaterMark()` for all tasks
+- FreeRTOS tracealyzer / RTX5 event recorder if available
+
+### Step 4: Apply fix methodology
+
+```
+1. Reproduce reliably → add instrumentation (GPIO toggle, ITM trace)
+2. Isolate scope → comment out unrelated code, test peripheral alone
+3. Verify hypothesis with measurement (scope, logic analyzer, DWT)
+4. Apply minimal fix
+5. Verify fix doesn't break other paths
+6. Add regression test or assertion
+```
+
+### Common root causes by frequency
+
+1. **Missing `volatile`** — ISR-shared variable optimized away at -O1+
+2. **DMA cache coherency** — M7: forgot `SCB_CleanDCache` before TX or `SCB_InvalidateDCache` before RX read
+3. **I2C bus lockup** — no recovery after HAL_ERROR; BUSY bit stuck
+4. **HAL_MAX_DELAY** — peripheral call hangs forever when hardware fails
+5. **Priority inversion** — low-prio task holds mutex needed by high-prio task; no priority inheritance
+6. **Stack overflow** — task stack too small; corrupts adjacent memory silently
+7. **LTO removes ISR/callback** — missing `__attribute__((used))` on `HAL_XxxCallback`
+8. **FDCAN no global filter** — accept-all floods RX FIFO with noise
+9. **RS485 DE timing** — switching to RX before TC fires cuts last byte
+10. **Clock source after Stop mode** — PLL stopped; forgot `SystemClock_Config()` after wake
+
+---
+
 ## STM32 Family Reference
 
 See [stm32-families.md](stm32-families.md) for:
@@ -781,7 +942,8 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-power-optimization.md](ref-power-optimization.md) | Sleep/Stop, clock gating, peripheral power-down |
 | [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pool, ring buffer, linker |
 | [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault dump, CFSR decode, reset cause, boot counter |
-| [ref-adc-timer.md](ref-adc-timer.md) | ADC DMA circular, oversampling, PWM, encoder, input capture |
+| [ref-adc-timer.md](ref-adc-timer.md) | ADC calibration (offset+gain+VREFINT), DMA circular, oversampling, watchdog, PWM, encoder |
+| [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB Host MSC (TinyUSB), FatFS (SDMMC+USB), LittleFS (internal flash), RTOS-safe file I/O |
 | [ref-iap-ota.md](ref-iap-ota.md) | Flash write, CRC verify, dual-bank OTA, bootloader jump |
 | [ref-mpu-trustzone.md](ref-mpu-trustzone.md) | MPU region setup, stack guard, TrustZone SAU, NSC API |
 | [ref-modbus-rtu.md](ref-modbus-rtu.md) | Modbus RTU slave over RS485, CRC16, FC03/04/06/16 |

@@ -1,7 +1,8 @@
-# Communication Protocol Reference — STM32 (HAL + LL + DMA)
+# Communication Protocol Reference — STM32 (HAL + LL + DMA + RTOS)
 
-Covers: I2C, SPI, UART/USART/RS485, FDCAN, Classic CAN, QSPI/OSPI, USB CDC, 1-Wire.  
-Targets: F0/F1/F4/F7/G0/G4/H7/H7RS/L4/U5/WB series.
+Covers: I2C, SPI, UART/USART/RS485, FDCAN, Classic CAN, QSPI/OSPI, USB CDC, 1-Wire, RTOS integration.  
+Targets: F0/F1/F4/F7/G0/G4/H7/H7RS/L4/U5/WB series.  
+RTOS: FreeRTOS and Keil RTX5 / CMSIS-RTOS2.
 
 ---
 
@@ -15,7 +16,8 @@ Targets: F0/F1/F4/F7/G0/G4/H7/H7RS/L4/U5/WB series.
 6. [QSPI / OSPI — External Flash / XIP](#6-qspi--ospi)
 7. [USB CDC (Virtual COM)](#7-usb-cdc)
 8. [1-Wire](#8-1-wire)
-9. [Protocol Verification Checklist](#9-protocol-verification-checklist)
+9. [RTOS Integration — FreeRTOS + RTX5](#9-rtos-integration)
+10. [Protocol Verification Checklist](#10-protocol-verification-checklist)
 
 ---
 
@@ -1072,3 +1074,328 @@ bool ds18b20_read_temp(float *temp_c)
 - Not waiting for WIP=0 after write → next command corrupts flash
 - Wrong dummy cycles → read returns garbage (must match flash datasheet)
 - XIP code in cached region without MPU write-back policy → stale instruction fetch
+
+---
+
+## 9. RTOS Integration
+
+### 9.1 Core principle: peripheral ownership model
+
+Every shared peripheral needs one owner. Don't scatter SPI calls across tasks.
+
+```
+Correct:           Wrong:
+SPI task           Task A ──→ SPI directly
+  ↑ queue          Task B ──→ SPI directly   ← race condition
+Task A             Task C ──→ SPI directly
+Task B
+```
+
+**Two valid patterns:**
+1. **Dedicated peripheral task** — only one task ever touches the peripheral registers
+2. **Mutex-guarded access** — any task can access, but must acquire mutex first
+
+Use pattern 1 for high-throughput or complex state machines (CAN, UART DMA).  
+Use pattern 2 for infrequent, blocking access (I2C sensor reads, SPI config writes).
+
+---
+
+### 9.2 I2C with mutex — FreeRTOS + RTX5
+
+```c
+/* One mutex per I2C bus — created at startup */
+#if defined(FREERTOS_FLAVOR)
+static SemaphoreHandle_t i2c1_mutex;
+void bus_init(void) { i2c1_mutex = xSemaphoreCreateMutex(); }
+
+HAL_StatusTypeDef i2c_write_task_safe(uint8_t dev, uint8_t reg,
+                                        const uint8_t *data, uint16_t len)
+{
+    if (xSemaphoreTake(i2c1_mutex, pdMS_TO_TICKS(50)) != pdTRUE)
+        return HAL_TIMEOUT;
+    HAL_StatusTypeDef r = i2c_write_safe(&hi2c1, dev, reg, data, len);
+    xSemaphoreGive(i2c1_mutex);
+    return r;
+}
+
+#elif defined(RTX5_FLAVOR)
+static osMutexId_t i2c1_mutex;
+static const osMutexAttr_t i2c1_mutex_attr = { "I2C1", osMutexRobust, NULL, 0 };
+void bus_init(void) { i2c1_mutex = osMutexNew(&i2c1_mutex_attr); }
+
+HAL_StatusTypeDef i2c_write_task_safe(uint8_t dev, uint8_t reg,
+                                        const uint8_t *data, uint16_t len)
+{
+    if (osMutexAcquire(i2c1_mutex, 50) != osOK)   /* 50ms timeout */
+        return HAL_TIMEOUT;
+    HAL_StatusTypeDef r = i2c_write_safe(&hi2c1, dev, reg, data, len);
+    osMutexRelease(i2c1_mutex);
+    return r;
+}
+#endif
+```
+
+**Mutex rules:**
+- Use `osMutexRobust` (RTX5) or `configUSE_MUTEXES=1` (FreeRTOS) — enables priority inheritance, prevents priority inversion
+- Never call from ISR — mutexes are task-only; use binary semaphores for ISR signaling
+- Set timeout, never infinite — a hung peripheral shouldn't hang the system
+
+---
+
+### 9.3 SPI with DMA completion semaphore
+
+```c
+/* DMA SPI: ISR gives semaphore → task unblocks after transfer */
+
+#if defined(FREERTOS_FLAVOR)
+static SemaphoreHandle_t spi_dma_done;
+void spi_rtos_init(void) { spi_dma_done = xSemaphoreCreateBinary(); }
+
+void spi_transfer_blocking_rtos(const uint8_t *tx, uint8_t *rx, uint16_t len)
+{
+    /* Prepare DMA as usual (cache clean/invalidate) */
+    SCB_CleanDCache_by_Addr((uint32_t *)tx, (len + 31U) & ~31U);
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx, (len + 31U) & ~31U);
+    HAL_SPI_TransmitReceive_DMA(&hspi1, tx, rx, len);
+    /* Block task until ISR gives semaphore */
+    xSemaphoreTake(spi_dma_done, pdMS_TO_TICKS(100));
+}
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(spi_dma_done, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+#elif defined(RTX5_FLAVOR)
+static osSemaphoreId_t spi_dma_done;
+void spi_rtos_init(void) {
+    spi_dma_done = osSemaphoreNew(1, 0, NULL);  /* initial count = 0 */
+}
+
+void spi_transfer_blocking_rtos(const uint8_t *tx, uint8_t *rx, uint16_t len)
+{
+    SCB_CleanDCache_by_Addr((uint32_t *)tx, (len + 31U) & ~31U);
+    SCB_InvalidateDCache_by_Addr((uint32_t *)rx, (len + 31U) & ~31U);
+    HAL_SPI_TransmitReceive_DMA(&hspi1, tx, rx, len);
+    osSemaphoreAcquire(spi_dma_done, 100);  /* 100ms */
+}
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    osSemaphoreRelease(spi_dma_done);  /* RTX5: safe from ISR */
+}
+#endif
+```
+
+---
+
+### 9.4 UART RX — ISR/DMA → task via queue
+
+```c
+/* CAN RX pattern works for UART too: ISR populates queue, task consumes */
+
+typedef struct { uint8_t data[128]; uint16_t len; } uart_frame_t;
+
+#if defined(FREERTOS_FLAVOR)
+static QueueHandle_t uart_rx_queue;
+void uart_rtos_init(void) {
+    uart_rx_queue = xQueueCreate(8, sizeof(uart_frame_t));
+}
+
+/* Called from HAL UART callback (in ISR context) */
+void uart_enqueue_frame_from_isr(const uint8_t *data, uint16_t len)
+{
+    uart_frame_t frame;
+    frame.len = (len > sizeof(frame.data)) ? sizeof(frame.data) : len;
+    memcpy(frame.data, data, frame.len);
+    BaseType_t woken = pdFALSE;
+    xQueueSendFromISR(uart_rx_queue, &frame, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+void uart_task(void *arg) {
+    uart_frame_t frame;
+    for (;;) {
+        if (xQueueReceive(uart_rx_queue, &frame, portMAX_DELAY) == pdTRUE)
+            protocol_parse(frame.data, frame.len);
+    }
+}
+
+#elif defined(RTX5_FLAVOR)
+static osMessageQueueId_t uart_rx_queue;
+void uart_rtos_init(void) {
+    uart_rx_queue = osMessageQueueNew(8, sizeof(uart_frame_t), NULL);
+}
+
+void uart_enqueue_frame_from_isr(const uint8_t *data, uint16_t len)
+{
+    uart_frame_t frame;
+    frame.len = (len > sizeof(frame.data)) ? sizeof(frame.data) : len;
+    memcpy(frame.data, data, frame.len);
+    osMessageQueuePut(uart_rx_queue, &frame, 0, 0); /* RTX5 auto-detects ISR context */
+}
+
+void uart_task(void *arg) {
+    uart_frame_t frame;
+    for (;;) {
+        if (osMessageQueueGet(uart_rx_queue, &frame, NULL, osWaitForever) == osOK)
+            protocol_parse(frame.data, frame.len);
+    }
+}
+#endif
+```
+
+---
+
+### 9.5 CAN RX — event flags for priority signaling
+
+Event flags are faster than queues for single-event signaling (new frame available):
+
+```c
+/* Pattern: ISR sets flag → high-priority task unblocks → reads from FIFO */
+
+#if defined(FREERTOS_FLAVOR)
+static EventGroupHandle_t can_events;
+#define CAN_RX_FLAG  (1 << 0)
+#define CAN_ERR_FLAG (1 << 1)
+
+void can_rtos_init(void) { can_events = xEventGroupCreate(); }
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *h, uint32_t ITs)
+{
+    BaseType_t woken = pdFALSE;
+    xEventGroupSetBitsFromISR(can_events, CAN_RX_FLAG, &woken);
+    portYIELD_FROM_ISR(woken);
+}
+
+void can_rx_task(void *arg) {
+    for (;;) {
+        xEventGroupWaitBits(can_events, CAN_RX_FLAG, pdTRUE, pdFALSE, portMAX_DELAY);
+        /* Drain FIFO — may have multiple frames */
+        FDCAN_RxHeaderTypeDef hdr; uint8_t data[64];
+        while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0) {
+            HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &hdr, data);
+            can_dispatch(&hdr, data);
+        }
+    }
+}
+
+#elif defined(RTX5_FLAVOR)
+static osEventFlagsId_t can_events;
+#define CAN_RX_FLAG  (1U << 0)
+
+void can_rtos_init(void) { can_events = osEventFlagsNew(NULL); }
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *h, uint32_t ITs)
+{
+    osEventFlagsSet(can_events, CAN_RX_FLAG);  /* safe from ISR */
+}
+
+void can_rx_task(void *arg) {
+    for (;;) {
+        osEventFlagsWait(can_events, CAN_RX_FLAG, osFlagsWaitAny, osWaitForever);
+        FDCAN_RxHeaderTypeDef hdr; uint8_t data[64];
+        while (HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) > 0) {
+            HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &hdr, data);
+            can_dispatch(&hdr, data);
+        }
+    }
+}
+#endif
+```
+
+---
+
+### 9.6 FDCAN dual FIFO + Tx Buffer / Queue management
+
+FDCAN has 3 distinct RX paths and 3 TX paths — use them to separate priorities:
+
+```
+RX paths:
+  FIFO 0  → high-priority frames (control, safety) — interrupt-driven
+  FIFO 1  → low-priority frames (diagnostics, telemetry) — polled
+  Rx Buffer → dedicated buffer for specific IDs (filter config required)
+
+TX paths:
+  Tx Buffer → dedicated slot, explicit transmission request
+  Tx FIFO   → FIFO queue, HW sends in submission order
+  Tx Queue  → priority queue, HW sends highest-priority frame first (sorted by CAN ID)
+```
+
+```c
+/* Filter: split traffic between FIFO0 and FIFO1 */
+FDCAN_FilterTypeDef f0 = {
+    .FilterIndex  = 0,
+    .FilterType   = FDCAN_FILTER_RANGE,
+    .FilterConfig = FDCAN_FILTER_TO_RXFIFO0,  /* safety/control IDs */
+    .FilterID1    = 0x100U, .FilterID2 = 0x1FFU,
+};
+FDCAN_FilterTypeDef f1 = {
+    .FilterIndex  = 1,
+    .FilterType   = FDCAN_FILTER_RANGE,
+    .FilterConfig = FDCAN_FILTER_TO_RXFIFO1,  /* diagnostic/telemetry IDs */
+    .FilterID1    = 0x400U, .FilterID2 = 0x4FFU,
+};
+HAL_FDCAN_ConfigFilter(&hfdcan1, &f0);
+HAL_FDCAN_ConfigFilter(&hfdcan1, &f1);
+
+/* Activate interrupts for both FIFOs */
+HAL_FDCAN_ActivateNotification(&hfdcan1,
+    FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO1_NEW_MESSAGE, 0);
+
+/* TX Queue mode (CubeMX: TxFifoQueueMode = TX_QUEUE_OPERATION) */
+/* HAL routes through Tx Queue when configured — H7 supports up to 32 Tx buffers */
+/* Check free level before sending: */
+if (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0) {
+    /* TX queue full: log and drop or retry */
+}
+
+/* FIFO0 overflow protection: watermark interrupt */
+HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_WATERMARK, 0);
+/* Set watermark at 75% of FIFO depth (CubeMX: Rx Fifo0 Watermark) */
+```
+
+```c
+/* Rx FIFO fill level monitoring — call from low-priority monitor task */
+void can_fifo_monitor(void)
+{
+    uint32_t f0_fill = HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0);
+    uint32_t f1_fill = HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO1);
+    if (f0_fill >= 3) log_warning(WARN_CAN_FIFO0_NEAR_FULL, f0_fill);
+    if (f1_fill >= 3) log_warning(WARN_CAN_FIFO1_NEAR_FULL, f1_fill);
+
+    FDCAN_ProtocolStatusTypeDef ps;
+    HAL_FDCAN_GetProtocolStatus(&hfdcan1, &ps);
+    if (ps.RxBRSCount > 0)   log_debug("FD frames received: BRS active");
+    if (ps.TxBRSCount > 0)   log_debug("FD frames sent: BRS active");
+    log_debug("TEC=%u REC=%u", ps.TxErrorCnt, ps.RxErrorCnt);
+}
+```
+
+---
+
+### 9.7 RTOS integration checklist
+
+- [ ] Every shared peripheral (I2C bus, SPI bus) protected by one mutex
+- [ ] Mutex has `osMutexRobust` / priority inheritance enabled (prevents priority inversion)
+- [ ] No mutex acquire/release in ISR — use binary semaphore or event flags
+- [ ] DMA completion uses semaphore (not busy-wait) in RTOS tasks
+- [ ] CAN RX: event flags for high-priority, queue for buffered frames
+- [ ] Queue depth ≥ burst frame count (CAN: ≥ 8; UART: ≥ 4 frames)
+- [ ] `portYIELD_FROM_ISR(woken)` called after every `xXxxxFromISR` in FreeRTOS
+- [ ] RTX5: `osMessageQueuePut` / `osEventFlagsSet` used from ISR (RTX5 auto-detects)
+- [ ] FDCAN FIFO0 ↔ FIFO1 split: control traffic in FIFO0, diagnostics in FIFO1
+- [ ] FDCAN Tx Queue mode for automatic priority arbitration on multi-frame bursts
+- [ ] FIFO watermark interrupt enabled to catch near-overflow before loss
+
+---
+
+## 10. Protocol Verification Checklist
+
+### Logic Analyzer / Oscilloscope verification
+
+| Protocol | What to verify |
+|----------|---------------|
+| I2C | ACK bit after every byte, clock stretching by slave, STOP/START timing, SCL frequency |
