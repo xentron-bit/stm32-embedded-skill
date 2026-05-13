@@ -241,6 +241,213 @@ Example (F4, HSE=8 MHz, SYSCLK=168 MHz):
   USB        = 336 / 7 = 48 MHz   ✓
 ```
 
+---
+
+## STM32H7 Dual-PLL Configuration (PLL1 + PLL2 + PLL3)
+
+H7 has three independent PLLs. PLL1 → SYSCLK; PLL2/PLL3 → peripherals (FDCAN, USB, OCTOSPI, SAI, ADC).
+
+```c
+void SystemClock_Config_H7_Dual_PLL(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
+    RCC_PeriphCLKInitTypeDef periph = {0};
+
+    HAL_PWREx_ConfigSupply(PWR_LDO_SUPPLY);
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0); /* VOS0: 480 MHz */
+    while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    osc.HSEState       = RCC_HSE_ON;
+
+    /* PLL1: SYSCLK = 480 MHz (from HSE=25MHz) */
+    /* VCO_in = 25/5 = 5 MHz; VCO = 5×192 = 960 MHz; P=2 → 480 MHz */
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    osc.PLL.PLLM       = 5;
+    osc.PLL.PLLN       = 192;
+    osc.PLL.PLLP       = 2;   /* SYSCLK = 480 MHz */
+    osc.PLL.PLLQ       = 4;   /* PLL1_Q = 240 MHz */
+    osc.PLL.PLLR       = 2;
+    osc.PLL.PLLRGE     = RCC_PLL1VCIRANGE_2;  /* VCO input 4–8 MHz */
+    osc.PLL.PLLVCOSEL  = RCC_PLL1VCOWIDE;
+    osc.PLL.PLLFRACN   = 0;
+    HAL_RCC_OscConfig(&osc);
+
+    /* PLL2: for FDCAN (104 MHz) and OCTOSPI (200 MHz) */
+    /* VCO_in = 25/5 = 5 MHz; VCO = 5×160 = 800 MHz */
+    /* Q=8 → 100 MHz for FDCAN; P=4 → 200 MHz for OCTOSPI */
+    periph.PeriphClockSelection |= RCC_PERIPHCLK_FDCAN;
+    periph.FdcanClockSelection   = RCC_FDCANCLKSOURCE_PLL2;
+    periph.PLL2.PLL2M            = 5;
+    periph.PLL2.PLL2N            = 160;
+    periph.PLL2.PLL2P            = 4;   /* 200 MHz → OCTOSPI */
+    periph.PLL2.PLL2Q            = 8;   /* 100 MHz → FDCAN   */
+    periph.PLL2.PLL2R            = 2;
+    periph.PLL2.PLL2RGE          = RCC_PLL2VCIRANGE_2;
+    periph.PLL2.PLL2VCOSEL       = RCC_PLL2VCOWIDE;
+    periph.PLL2.PLL2FRACN        = 0;
+
+    /* PLL3: for USB (48 MHz exact) and SAI/I2S audio */
+    /* VCO_in = 25/5 = 5 MHz; VCO = 5×96 = 480 MHz; Q=10 → 48 MHz */
+    periph.PeriphClockSelection |= RCC_PERIPHCLK_USB;
+    periph.UsbClockSelection     = RCC_USBCLKSOURCE_PLL3;
+    periph.PLL3.PLL3M            = 5;
+    periph.PLL3.PLL3N            = 96;
+    periph.PLL3.PLL3P            = 2;
+    periph.PLL3.PLL3Q            = 10;  /* 48 MHz → USB */
+    periph.PLL3.PLL3R            = 2;
+    periph.PLL3.PLL3RGE          = RCC_PLL3VCIRANGE_2;
+    periph.PLL3.PLL3VCOSEL       = RCC_PLL3VCOWIDE;
+    periph.PLL3.PLL3FRACN        = 0;
+
+    HAL_RCCEx_PeriphCLKConfig(&periph);
+
+    /* System clock configuration */
+    clk.ClockType        = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK
+                         | RCC_CLOCKTYPE_D1PCLK1 | RCC_CLOCKTYPE_PCLK1
+                         | RCC_CLOCKTYPE_PCLK2   | RCC_CLOCKTYPE_D3PCLK1;
+    clk.SYSCLKSource     = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.SYSCLKDivider    = RCC_SYSCLK_DIV1;   /* CPU1 = 480 MHz */
+    clk.AHBCLKDivider    = RCC_HCLK_DIV2;     /* AHB = 240 MHz  */
+    clk.APB3CLKDivider   = RCC_APB3_DIV2;     /* APB3 = 120 MHz */
+    clk.APB1CLKDivider   = RCC_APB1_DIV2;     /* APB1 = 120 MHz */
+    clk.APB2CLKDivider   = RCC_APB2_DIV2;     /* APB2 = 120 MHz */
+    clk.APB4CLKDivider   = RCC_APB4_DIV2;     /* APB4 = 120 MHz */
+    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4);
+
+    /* Enable instruction cache (ART Accelerator on H7 is AXI) */
+    SCB_EnableICache();
+    SCB_EnableDCache();
+}
+```
+
+---
+
+## STM32H5 / U5 Clock Tree (Different from H7)
+
+H5 and U5 use a different RCC structure: ICACHE (not ART), one main PLL + two secondary PLLs, no D1/D2/D3 domain split.
+
+```c
+/* STM32H563 / H573 — up to 250 MHz from HSE */
+void SystemClock_Config_H5(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
+
+    /* VOS0 required for 250 MHz */
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
+    while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    osc.HSEState       = RCC_HSE_ON;
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    /* VCO_in = 25/5 = 5 MHz (H5 VCI range: 4–16 MHz) */
+    /* VCO_out = 5×100 = 500 MHz; P=2 → 250 MHz */
+    osc.PLL.PLLM       = 5;
+    osc.PLL.PLLN       = 100;
+    osc.PLL.PLLP       = 2;   /* SYSCLK = 250 MHz */
+    osc.PLL.PLLQ       = 2;   /* PLL1_Q = 250 MHz → FDCAN, OCTOSPI */
+    osc.PLL.PLLR       = 2;
+    osc.PLL.PLLRGE     = RCC_PLL1VCIRANGE_1; /* 4–8 MHz — H5 uses different enum! */
+    osc.PLL.PLLVCOSEL  = RCC_PLL1VCOMEDIUM;  /* 150–420 MHz VCO — H5 range */
+    osc.PLL.PLLFRACN   = 0;
+    HAL_RCC_OscConfig(&osc);
+
+    clk.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK
+                       | RCC_CLOCKTYPE_PCLK1  | RCC_CLOCKTYPE_PCLK2
+                       | RCC_CLOCKTYPE_PCLK3;
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;   /* AHB = 250 MHz */
+    clk.APB1CLKDivider = RCC_HCLK_DIV2;     /* APB1 = 125 MHz */
+    clk.APB2CLKDivider = RCC_HCLK_DIV2;     /* APB2 = 125 MHz */
+    clk.APB3CLKDivider = RCC_HCLK_DIV2;     /* APB3 = 125 MHz */
+    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5); /* H5@250MHz: 5 WS */
+
+    /* H5: enable ICACHE (replaces F4/H7 ART Accelerator) */
+    __HAL_RCC_ICACHE_CLK_ENABLE();
+    HAL_ICACHE_Enable();
+}
+
+/* STM32U575 / U585 — 160 MHz, ultra-low-power focus */
+void SystemClock_Config_U5(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
+
+    /* U5: MSIS or HSE as PLL source. MSIS (16MHz default) avoids external crystal */
+    osc.OscillatorType = RCC_OSCILLATORTYPE_MSIS;
+    osc.MSISState      = RCC_MSI_ON;
+    osc.MSISClockRange = RCC_MSIRANGE_4;  /* 4 MHz (internal) */
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_MSIS;
+    /* VCO_in = 4/1 = 4 MHz; VCO = 4×40 = 160 MHz; P=1 → 160 MHz */
+    osc.PLL.PLLM       = 1;
+    osc.PLL.PLLN       = 40;
+    osc.PLL.PLLP       = 1;   /* SYSCLK = 160 MHz */
+    osc.PLL.PLLQ       = 2;   /* 80 MHz for USB/SAI */
+    osc.PLL.PLLR       = 1;
+    HAL_RCC_OscConfig(&osc);
+
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+    clk.APB1CLKDivider = RCC_HCLK_DIV1;
+    clk.APB2CLKDivider = RCC_HCLK_DIV1;
+    clk.APB3CLKDivider = RCC_HCLK_DIV1;
+    HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4); /* U5@160MHz: 4 WS */
+
+    /* U5: enable ICACHE */
+    HAL_ICACHE_Enable();
+}
+```
+
+---
+
+## ICACHE (H5, U5, G0, C0 — replaces ART Accelerator)
+
+```c
+/* Enable before executing from flash at high frequency */
+/* Must be called AFTER SystemClock_Config() sets flash wait states */
+
+void icache_enable(void)
+{
+    __HAL_RCC_ICACHE_CLK_ENABLE();
+
+    /* Choose mapping mode: direct-mapped (faster) or 2-way set-associative */
+    ICACHE->CR = ICACHE_CR_WAYSEL;   /* 2-way set-associative (better for real code) */
+
+    HAL_ICACHE_Enable();
+
+    /* Invalidate before first enable or after XIP flash update */
+    /* HAL_ICACHE_Invalidate(); */
+}
+
+/* After in-application flash write: MUST invalidate I-Cache */
+void icache_invalidate_after_flash_write(void)
+{
+    HAL_ICACHE_Disable();
+    HAL_ICACHE_Invalidate();    /* waits for BSYENDF flag */
+    HAL_ICACHE_Enable();
+}
+```
+
+---
+
+## Clock Frequency Map — Family Comparison
+
+| Family | Max SYSCLK | VCO Input | Flash WS@Max | I-Cache |
+|--------|-----------|-----------|-------------|---------|
+| STM32F4 | 168 MHz | 1–2 MHz | 5 WS | ART Accelerator |
+| STM32F7 | 216 MHz | 1–2 MHz | 7 WS | ART + L1 cache |
+| STM32H7 | 480 MHz | 1–16 MHz | 4 WS (VOS0) | AXI + I/D-Cache |
+| STM32G4 | 170 MHz | 2.66–16 MHz | 4 WS | ICACHE |
+| STM32H5 | 250 MHz | 4–16 MHz | 5 WS | ICACHE |
+| STM32U5 | 160 MHz | 2.66–16 MHz | 4 WS | ICACHE |
+
+---
+
 ## Rules
 
 - Always set flash wait states BEFORE increasing SYSCLK — never after
@@ -250,3 +457,7 @@ Example (F4, HSE=8 MHz, SYSCLK=168 MHz):
 - Backup domain (RTC, BKP registers) survives IWDG and software resets — use for persistent state
 - H7: must wait for `PWR_FLAG_VOSRDY` after VOS change before configuring PLL
 - PLLM must produce 1–2 MHz VCO input on F4 — violating this causes unstable VCO
+- H7 PLL2/PLL3: configure via `HAL_RCCEx_PeriphCLKConfig()`, NOT `HAL_RCC_OscConfig()`
+- H5/U5 ICACHE: must invalidate after any in-application flash write; plain enable at boot is enough
+- H5 VCO range enum values differ from H7 — check `RCC_PLL1VCIRANGE_x` in your family's header
+- U5 MSIS: usable as PLL source without external crystal — useful for low-cost, low-BOM designs
