@@ -40,6 +40,10 @@ Activates the 5-phase workflow: Analyze Constraints → Design Architecture → 
 | `ref-mpu-trustzone.md` | MPU stack guard, non-cacheable DMA, TrustZone |
 | `ref-j1939.md` | SAE J1939: AC state machine, CMDT TP, DM1/DM11, FDCAN bit timing |
 | `ref-uds-iso14229.md` | ISO 14229 UDS: P2/P2*/S3 timing, Security Access, dual-bank OTA |
+| `ref-obd2.md` | OBD-II (SAE J1979): all Modes 0x01-0x0A, Permanent DTC, readiness monitors, ECU template |
+| `ref-wwh-obd.md` | WWH-OBD (ISO 27145): Euro VI, J1939 29-bit IDs, 0xF6xx DIDs, IUMPR, lamp severity |
+| `ref-diagnostic-stack.md` | Multi-protocol DEM: unified DTC, CAN dispatch, NVM, freeze frame, OBD+J1939+UDS+WWH |
+| `ref-dtc-mapping.md` | J1939 SPN/FMI ↔ OBD-II P-code ↔ WWH wire format, conversion functions, FMI table |
 
 ## Errata Kontrol — Proje Analizi Workflow'u
 
