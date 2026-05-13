@@ -694,53 +694,37 @@ Before declaring firmware "done for production":
 
 **Do this before opening the Code Review Checklist.** Skipping this step produces false positives — flagging intentional embedded optimizations as bugs.
 
-### Step 1 — Generate the Code Map
+### Step 1 — Generate the Code Map (AUTOMATIC — do not skip)
 
-Run before reviewing any `.c` file. The map reveals call depth, shared variables, and include chains that are invisible from a single file.
+**Bu adım zorunludur ve otomatik çalışır.** Herhangi bir `.c` dosyasına bakmadan önce graph'ı oluştur veya oku.
 
-**Zorunlu: Graphify** — Tree-sitter tabanlı knowledge graph. Her kod analizinde çalıştırılır. C/C++ + header bağımlılıkları + Keil projelerini destekler. Büyük projelerde token kullanımını 70x azaltır.
+**CLAUDE: Bu skill invoke edildiğinde aşağıdaki adımları HEMEN uygula:**
 
-```bash
-# 1. Kurulum (tek seferlik — global)
-pip install git+https://github.com/safishamsi/graphify
+```
+1. Bash ile kontrol et: [ -f graphify-out/GRAPH_REPORT.md ]
+   - VARSA  → Read("graphify-out/GRAPH_REPORT.md") ile oku, Step 2'ye geç
+   - YOKSA  → graphify'ı çalıştır (aşağıdaki adım)
 
-# 2. Proje klasöründe Claude Code hook'u kur (tek seferlik — CLAUDE.md + PreToolUse hook)
-cd <proje-klasörü>
-graphify claude install
+2. Graph yoksa — Skill tool ile graphify'ı invoke et:
+   Skill(skill="graphify", args="<proje-dizini>")
+   Örnek: Skill(skill="graphify", args="/Users/akeles/Desktop/External flash xip/DE-XENTRON-V3-BL")
+   
+   graphify çalışınca GRAPH_REPORT.md otomatik oluşur.
+   Bitmeden Step 2'ye GEÇME.
 
-# 3. Her yeni Claude Code oturumunda: Claude Code terminalinde slash command ile graph oluştur
-/graphify .
-
-# Çıktı (graphify-out/ klasörü):
-#   GRAPH_REPORT.md  ← god nodes, çağrı zincirleri, paylaşılan değişkenler — bunu oku
-#   graph.html       ← interaktif görselleştirme (Obsidian'da da açılabilir)
-#   graph.json       ← sorgulanabilir JSON
-
-# Graph oluştuktan sonra analiz:
-# graphify query "DMA buffer kim kullanıyor" --graph graphify-out/graph.json
-# graphify path "OSPI_WriteEnable" "CSP_OSPI_WriteMemory"
+3. Graph tamamlandıktan sonra:
+   - Read("graphify-out/GRAPH_REPORT.md") — God Nodes ve Surprising Connections bölümlerini oku
+   - graphify query ile spesifik sorular sor:
+     Bash: graphify query "DMA buffer kim kullanıyor" --graph graphify-out/graph.json
+     Bash: graphify path "OSPI_WriteEnable" "CSP_OSPI_WriteMemory" --graph graphify-out/graph.json
 ```
 
-> **Not:** `/graphify .` Claude Code'un kendi API key'ini kullanır — `.env`'e gerek yok.
-> `graphify claude install` komutu CLAUDE.md'ye bir bölüm ve `.claude/settings.json`'a PreToolUse hook ekler.
+**Çıktılar (`graphify-out/` klasörü):**
+- `GRAPH_REPORT.md` — God nodes, call chains, paylaşılan değişkenler
+- `graph.html` — İnteraktif görselleştirme
+- `graph.json` — Sorgulanabilir JSON
 
-> Graphify kurulu değilse alternatif olarak `c_codemap_gen.py` kullanılabilir:
-
-```bash
-# Keil project (UV4 available)
-python3 c_codemap_gen.py --build keil --uv4 auto
-
-# Keil project (no UV4 — XML parse)
-python3 c_codemap_gen.py --build keil
-
-# CMake project
-python3 c_codemap_gen.py --build cmake
-
-# Then load into review
-# claude --context .codemap/summary.md "Review uart.c"
-```
-
-Her iki araç da çağrı derinliği, paylaşılan değişkenler ve include zincirlerini ortaya çıkarır. Dosyayı önce oku — birçok "eksik null check" aslında çağrı grafı göz önüne alındığında hiç çalışmayan ölü kod yollarıdır.
+> Graph, çağrı derinliği ve include zincirlerini ortaya çıkarır. Birçok "eksik null check" aslında çağrı grafı göz önüne alındığında hiç çalışmayan ölü kod yollarıdır — önce graph'ı oku.
 
 ### Step 2 — Context Interview (ask before flagging anything)
 

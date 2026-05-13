@@ -1,25 +1,21 @@
 # STM32 Embedded Development Skill
 
-## Code Analysis — Graphify (Required)
+## Code Analysis — Graphify (Automatic)
 
-Before reviewing any project, build the knowledge graph with Graphify:
+**Graph yoksa SKILL otomatik çalıştırır — manuel `/graphify .` gerekmez.**
+
+Skill invoke edilince Claude şunu yapar:
+1. `graphify-out/GRAPH_REPORT.md` var mı kontrol et
+2. Yoksa → `Skill(skill="graphify", args="<proje-dizini>")` ile otomatik build et
+3. Varsa → oku ve analize başla
 
 ```bash
-# Install once
-pip install git+https://github.com/safishamsi/graphify
-
-# Per-project setup (writes CLAUDE.md hook + PreToolUse)
-graphify claude install
-
-# Build graph — use Claude Code slash command (uses Claude's API key)
-/graphify .
-
-# Query the graph
+# Sorgu (graph hazır olduktan sonra)
 graphify query "who uses DMA buffer" --graph graphify-out/graph.json
 graphify path "FuncA" "FuncB" --graph graphify-out/graph.json
 ```
 
-The graph output is at `graphify-out/GRAPH_REPORT.md`. Read it before diving into files — saves 70x tokens on large projects.
+Graph çıktısı: `graphify-out/GRAPH_REPORT.md` — God nodes, call chains, paylaşılan değişkenler.
 
 ## Skill Activation
 
