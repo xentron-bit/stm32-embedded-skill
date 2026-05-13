@@ -698,26 +698,31 @@ Before declaring firmware "done for production":
 
 Run before reviewing any `.c` file. The map reveals call depth, shared variables, and include chains that are invisible from a single file.
 
-**Önerilen: Graphify** — Tree-sitter tabanlı knowledge graph, C/C++ + header bağımlılıkları + Keil projelerini destekler. Büyük projelerde token kullanımını 70x azaltır.
+**Zorunlu: Graphify** — Tree-sitter tabanlı knowledge graph. Her kod analizinde çalıştırılır. C/C++ + header bağımlılıkları + Keil projelerini destekler. Büyük projelerde token kullanımını 70x azaltır.
 
 ```bash
-# Graphify kurulum (tek seferlik)
-pip install graphify-code   # veya: pip install git+https://github.com/safishamsi/graphify
+# 1. Kurulum (tek seferlik — global)
+pip install git+https://github.com/safishamsi/graphify
 
-# Claude Code hook entegrasyonu (tek seferlik — CLAUDE.md + PreToolUse hook yazar)
-graphify install
+# 2. Proje klasöründe Claude Code hook'u kur (tek seferlik — CLAUDE.md + PreToolUse hook)
+cd <proje-klasörü>
+graphify claude install
 
-# Proje analizi — Keil, CMake, bare-metal C hepsi desteklenir
-graphify run .
+# 3. Her yeni Claude Code oturumunda: Claude Code terminalinde slash command ile graph oluştur
+/graphify .
 
-# Çıktı:
-#   graphify-out/GRAPH_REPORT.md  ← god nodes, çağrı zincirleri, paylaşılan değişkenler
-#   graphify-out/graph.html       ← interaktif görselleştirme
-#   graphify-out/graph.json       ← sorgulanabilir JSON
+# Çıktı (graphify-out/ klasörü):
+#   GRAPH_REPORT.md  ← god nodes, çağrı zincirleri, paylaşılan değişkenler — bunu oku
+#   graph.html       ← interaktif görselleştirme (Obsidian'da da açılabilir)
+#   graph.json       ← sorgulanabilir JSON
 
-# Review'a yükle
-# claude --context graphify-out/GRAPH_REPORT.md "Review octospi.c"
+# Graph oluştuktan sonra analiz:
+# graphify query "DMA buffer kim kullanıyor" --graph graphify-out/graph.json
+# graphify path "OSPI_WriteEnable" "CSP_OSPI_WriteMemory"
 ```
+
+> **Not:** `/graphify .` Claude Code'un kendi API key'ini kullanır — `.env`'e gerek yok.
+> `graphify claude install` komutu CLAUDE.md'ye bir bölüm ve `.claude/settings.json`'a PreToolUse hook ekler.
 
 > Graphify kurulu değilse alternatif olarak `c_codemap_gen.py` kullanılabilir:
 

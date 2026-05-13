@@ -7,7 +7,12 @@
       "Bash(git branch *)",
       "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev log --all -p)",
       "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev show HEAD:README.md)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev push origin main --force)"
+      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev push origin main --force)",
+      "WebFetch(domain:graphify.net)",
+      "Bash(python3 -m graphify --help)",
+      "Bash(graphify run *)",
+      "Bash(graphify --help)",
+      "Bash(graphify claude *)"
     ]
   }
 }

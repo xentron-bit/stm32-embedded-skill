@@ -1,63 +1,43 @@
-# qsv Data Wrangling - Workflow Guide
+# STM32 Embedded Development Skill
 
-This CLAUDE.md was auto-deployed by the qsv plugin to provide workflow guidance.
-You can edit or replace it — it will NOT be overwritten on future sessions.
-To disable auto-deployment, set `QSV_NO_COWORK_SETUP=1` in your shell environment before launching Claude Code.
+## Code Analysis — Graphify (Required)
 
----
+Before reviewing any project, build the knowledge graph with Graphify:
 
-## Workflow Order
+```bash
+# Install once
+pip install git+https://github.com/safishamsi/graphify
 
-For new files:
-1. **`qsv_list_files`** to discover files in the working directory
-2. **`qsv_index`** for files >10MB (enables faster processing)
-3. **`qsv_stats --cardinality --stats-jsonl`** to create a stats cache
-4. Then run analysis/transformation commands
+# Per-project setup (writes CLAUDE.md hook + PreToolUse)
+graphify claude install
 
-The stats cache accelerates: `frequency`, `schema`, `tojsonl`, `sqlp`, `joinp`, `pivotp`, `describegpt`, `moarstats`, `sample`.
+# Build graph — use Claude Code slash command (uses Claude's API key)
+/graphify .
 
-`qsv_sqlp` auto-converts CSV inputs to Parquet before execution.
+# Query the graph
+graphify query "who uses DMA buffer" --graph graphify-out/graph.json
+graphify path "FuncA" "FuncB" --graph graphify-out/graph.json
+```
 
-## File Handling
+The graph output is at `graphify-out/GRAPH_REPORT.md`. Read it before diving into files — saves 70x tokens on large projects.
 
-- Save outputs to files with descriptive names rather than returning large results to chat.
-- Ensure output files are saved to the qsv working directory.
-- **Parquet** is ONLY for `sqlp`/DuckDB; all other qsv commands require CSV/TSV/SSV input.
-- **Spreadsheets** (`.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.ods`) must be converted to CSV first using `qsv_command` with `command="excel"` before other qsv commands can process them.
-- The working directory is automatically synced from the MCP client's root directory when available.
-- If the auto-synced directory is incorrect or no root is provided, call **`qsv_set_working_dir`** to set it manually.
-- In Claude Cowork, verify the working directory matches the "Work in a folder" path by calling **`qsv_get_working_dir`**, and correct it with **`qsv_set_working_dir`** if needed.
+## Skill Activation
 
-## Tool Composition
+```
+/stm32-embedded-dev
+```
 
-- **`qsv_sqlp`** auto-converts CSV inputs to Parquet, then routes to DuckDB when available for better SQL compatibility and performance; falls back to Polars SQL otherwise.
-- For multi-file SQL queries, convert all files to Parquet first with **`qsv_to_parquet`**, then use `read_parquet()` references in SQL.
-- For custom row-level logic, use **`qsv_command`** with `command="luau"`.
+Activates the 5-phase workflow: Analyze Constraints → Design Architecture → Implement Drivers → Optimize Resources → Test & Verify.
 
-## Memory Limits
+## Reference Files
 
-Commands `dedup`, `sort`, `reverse`, `table`, `transpose`, `pragmastat`, and `stats` (with extended stats) load entire files into memory.
-
-For files >1GB, prefer `extdedup`/`extsort` alternatives via **`qsv_command`**.
-
-Check column cardinality with **`qsv_stats`** before running `frequency` or `pivotp` to avoid huge output.
-
-## Tool Discovery
-
-Use **`qsv_search_tools`** to discover commands beyond the initially loaded core tools. There are 51 qsv skill-based commands available covering selection, filtering, transformation, aggregation, joining, validation, formatting, conversion, and more. Tool names may change across versions; check `qsv_search_tools` if any are unrecognized.
-
-## Operation Timeout
-
-qsv operations can take significant time on larger files. The MCP server's default operation timeout is 10 minutes (configurable via `QSV_MCP_OPERATION_TIMEOUT_MS`, max 30 minutes). Allow operations to run to completion.
-
-## Cowork-Specific Notes
-
-- **Path Architecture**: qsv runs on the HOST machine. File paths must be valid
-  on the host. Always verify with `qsv_get_working_dir`.
-- **Sequential Operations**: Prefer sequential over parallel qsv calls to avoid
-  queuing delays: index → stats → analysis.
-- **Large Files (>5GB)**: Let `qsv_frequency` run to completion (server timeout
-  is 10 min). Only fall back to `qsv_sqlp` with GROUP BY if the server timeout
-  is exceeded. Use `extsort`/`extdedup` via `qsv_command` instead of `sort`/`dedup`.
-- **Context Window**: Save outputs to files rather than returning to chat.
-  Use `qsv_slice` or `qsv_sqlp` with LIMIT to inspect subsets.
+| File | Topic |
+|------|-------|
+| `ref-qspi-octospi-highspeed.md` | QSPI/OCTOSPI high-speed issues, sample shift, DLYB, dummy cycles |
+| `ref-communication-protocols.md` | I2C, SPI DMA, UART ring buffer, FDCAN |
+| `ref-rtos-patterns.md` | FreeRTOS & RTX5 task, ISR, mutex, event patterns |
+| `ref-keil-armclang.md` | Keil MDK / AC6: LTO traps, scatter, RTX5 pitfalls |
+| `ref-compiler-hardening.md` | volatile, barriers, DMA cache, ISR reorder |
+| `ref-fault-handlers.md` | HardFault decode, BusFault, reset cause |
+| `ref-memory-optimization.md` | Compiler flags, memory pools, linker script |
+| `ref-mpu-trustzone.md` | MPU stack guard, non-cacheable DMA, TrustZone |
