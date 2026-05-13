@@ -10,6 +10,7 @@ A comprehensive Claude Code skill for STM32 embedded systems development coverin
 | [stm32-families.md](stm32-families.md) | Complete STM32 family catalog with HAL repos, CMSIS device links, Keil RTX5 config |
 | **Drivers & Protocols** | |
 | [ref-communication-protocols.md](ref-communication-protocols.md) | I2C, SPI DMA, UART ring buffer, FDCAN patterns |
+| [ref-qspi-octospi-highspeed.md](ref-qspi-octospi-highspeed.md) | QSPI/OCTOSPI yüksek hız sorunları: sample shift, DLYB, dummy cycle, GPIO speed, XIP write |
 | [ref-uds-iso14229.md](ref-uds-iso14229.md) | ISO 14229 UDS protocol: services, session management, NRC codes, STM32 FDCAN |
 | [ref-j1939.md](ref-j1939.md) | SAE J1939 protocol: PGN structure, address claiming, transport protocol, STM32 FDCAN |
 | [ref-modbus-rtu.md](ref-modbus-rtu.md) | Modbus RTU over UART/RS-485: frame format, CRC, master/slave state machines |
@@ -56,10 +57,21 @@ Then use the skill in Claude Code:
 /stm32-embedded-dev
 ```
 
+## Code Analysis Tool: Graphify
+
+Proje incelemesi başlamadan önce [Graphify](https://github.com/safishamsi/graphify) ile knowledge graph oluştur. C/C++ + header bağımlılıkları + Keil projelerini destekler; büyük projelerde token kullanımını 70x azaltır.
+
+```bash
+pip install graphify-code
+graphify install   # CLAUDE.md + PreToolUse hook yazar
+graphify run .     # graphify-out/GRAPH_REPORT.md üretir
+```
+
 ## Sources
 
 - [STMicroelectronics GitHub](https://github.com/orgs/STMicroelectronics/repositories) — HAL drivers, CMSIS device packs
 - [ARM CMSIS-RTX](https://github.com/ARM-software/CMSIS-RTX) — Keil RTX5 / CMSIS-RTOS2
+- [Graphify](https://github.com/safishamsi/graphify) — Knowledge graph for AI coding assistants
 
 ## License
 

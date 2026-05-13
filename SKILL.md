@@ -698,6 +698,29 @@ Before declaring firmware "done for production":
 
 Run before reviewing any `.c` file. The map reveals call depth, shared variables, and include chains that are invisible from a single file.
 
+**Önerilen: Graphify** — Tree-sitter tabanlı knowledge graph, C/C++ + header bağımlılıkları + Keil projelerini destekler. Büyük projelerde token kullanımını 70x azaltır.
+
+```bash
+# Graphify kurulum (tek seferlik)
+pip install graphify-code   # veya: pip install git+https://github.com/safishamsi/graphify
+
+# Claude Code hook entegrasyonu (tek seferlik — CLAUDE.md + PreToolUse hook yazar)
+graphify install
+
+# Proje analizi — Keil, CMake, bare-metal C hepsi desteklenir
+graphify run .
+
+# Çıktı:
+#   graphify-out/GRAPH_REPORT.md  ← god nodes, çağrı zincirleri, paylaşılan değişkenler
+#   graphify-out/graph.html       ← interaktif görselleştirme
+#   graphify-out/graph.json       ← sorgulanabilir JSON
+
+# Review'a yükle
+# claude --context graphify-out/GRAPH_REPORT.md "Review octospi.c"
+```
+
+> Graphify kurulu değilse alternatif olarak `c_codemap_gen.py` kullanılabilir:
+
 ```bash
 # Keil project (UV4 available)
 python3 c_codemap_gen.py --build keil --uv4 auto
@@ -712,7 +735,7 @@ python3 c_codemap_gen.py --build cmake
 # claude --context .codemap/summary.md "Review uart.c"
 ```
 
-The `.codemap/summary.md` index gives function call chains and include dependencies. Read it first — many "missing null checks" are actually dead code paths that never execute given the call graph.
+Her iki araç da çağrı derinliği, paylaşılan değişkenler ve include zincirlerini ortaya çıkarır. Dosyayı önce oku — birçok "eksik null check" aslında çağrı grafı göz önüne alındığında hiç çalışmayan ölü kod yollarıdır.
 
 ### Step 2 — Context Interview (ask before flagging anything)
 
@@ -976,6 +999,7 @@ See [stm32-families.md](stm32-families.md) for:
 |------|----------|
 | [stm32-families.md](stm32-families.md) | Family catalog, HAL repos, CMSIS, RTX5 config |
 | [ref-communication-protocols.md](ref-communication-protocols.md) | I2C, SPI DMA, UART ring buffer, FDCAN |
+| [ref-qspi-octospi-highspeed.md](ref-qspi-octospi-highspeed.md) | QSPI/OCTOSPI yüksek hız sorunları: sample shift, DLYB, dummy cycle, GPIO speed, XIP write |
 | [ref-rtos-patterns.md](ref-rtos-patterns.md) | FreeRTOS periodic, ISR→task, mutex, event groups |
 | [ref-power-optimization.md](ref-power-optimization.md) | Sleep/Stop, clock gating, peripheral power-down |
 | [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pool, ring buffer, linker |
