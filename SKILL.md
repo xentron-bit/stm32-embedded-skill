@@ -701,6 +701,14 @@ Before declaring firmware "done for production":
 **CLAUDE: Bu skill invoke edildiğinde aşağıdaki adımları HEMEN uygula:**
 
 ```
+0. Graphify kurulum + versiyon kontrolü (her oturumda)
+   Bash: which graphify && graphify --version 2>/dev/null
+   - KURULU DEĞİLSE → yükle:
+     Bash: pip3 install graphifyy --break-system-packages
+   - KURULUYSA → versiyonu kullanıcıya bildir (örn: "graphify 0.7.16 ✓")
+   - Güncelleme kontrolü:
+     Bash: pip3 install --upgrade graphifyy --break-system-packages 2>&1 | grep -E "Successfully|already"
+
 1. Bash ile kontrol et: [ -f graphify-out/GRAPH_REPORT.md ]
    - VARSA  → Read("graphify-out/GRAPH_REPORT.md") ile oku, Step 2'ye geç
    - YOKSA  → graphify'ı çalıştır (aşağıdaki adım)
