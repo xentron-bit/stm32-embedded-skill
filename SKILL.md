@@ -734,6 +734,57 @@ Before declaring firmware "done for production":
 
 > Graph, çağrı derinliği ve include zincirlerini ortaya çıkarır. Birçok "eksik null check" aslında çağrı grafı göz önüne alındığında hiç çalışmayan ölü kod yollarıdır — önce graph'ı oku.
 
+### Obsidian Integration (İsteğe Bağlı — Büyük Projeler İçin)
+
+Graphify, Obsidian vault'una doğrudan export yapabilir. Her fonksiyon/dosya ayrı bir `.md` notu olur, wiki-link ve frontmatter ile bağlanır.
+
+**Kurulum:**
+```bash
+# Obsidian'ı indir: https://obsidian.md (macOS/Windows/Linux — ücretsiz)
+# Yeni vault oluştur veya mevcut vault dizinini kullan
+```
+
+**Export Komutu:**
+```bash
+# STM32 projesini Obsidian vault'una export et
+graphify export obsidian ./Core \
+  --obsidian-dir ~/vaults/stm32-proje \
+  --watch
+
+# --watch: C/header değişikliklerinde AST otomatik güncellenir
+# LLM maliyeti yok — sadece parser yeniden çalışır
+# Not: Obsidian vault'u manuel yenile (Ctrl+R) her export sonrası
+```
+
+**Önerilen Obsidian Eklentileri:**
+| Eklenti | Amaç | Öncelik |
+|---------|------|---------|
+| **Graph Analysis** | Call graph → Obsidian graph view entegrasyonu | Zorunlu |
+| **Dataview** | `dataview` sorguları ile fonksiyon/dosya filtreleme | Zorunlu |
+| **Kanban** | Bug/review kartları oluştur, graph node'larına bağla | İsteğe bağlı |
+| **Breadcrumbs** | Hiyerarşik navigasyon (driver → HAL → peripheral) | İsteğe bağlı |
+
+**STM32 Projesi İçin Best Practice Komutu:**
+```bash
+# Derin analiz modu — HAL + LL + uygulama katmanını birlikte haritalandırır
+/graphify ./Core --obsidian --watch --mode deep
+```
+
+**Dataview Sorgu Örneği (Obsidian notu içinde):**
+```dataview
+TABLE file.size, file.mtime FROM "stm32-proje/Core/Src"
+WHERE contains(tags, "dma") OR contains(tags, "isr")
+SORT file.size DESC
+```
+
+**Ne Zaman Kullan:**
+- 10+ kaynak dosyası olan projeler
+- Birden fazla geliştirici (graph → ortak referans noktası)
+- Uzun vadeli bakım (hangi fonksiyon nerede kullanılıyor?)
+- ISR → Task → Protocol zincirini görselleştirmek istiyorsan
+
+**Obsidian kurulu değilse:** `graphify-out/graph.html` dosyasını tarayıcıda aç — interaktif görselleştirme Obsidian gerekmeden çalışır.
+
 ### Step 2 — Context Interview (ask before flagging anything)
 
 Embedded code that looks wrong is often intentionally simplified because the developer owns both sides of the system. Ask these questions **before** raising any finding:

@@ -12,7 +12,10 @@
       "Bash(python3 -m graphify --help)",
       "Bash(graphify run *)",
       "Bash(graphify --help)",
-      "Bash(graphify claude *)"
+      "Bash(graphify claude *)",
+      "Bash(graphify --version)",
+      "Bash(graphify version *)",
+      "Bash(mdfind \"kMDItemCFBundleIdentifier == 'md.obsidian'\")"
     ]
   }
 }
