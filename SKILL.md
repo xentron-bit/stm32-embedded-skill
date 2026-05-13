@@ -702,11 +702,31 @@ Before declaring firmware "done for production":
 
 ```
 0. Graphify kurulum + versiyon kontrolü (her oturumda)
+
+   # 1. graphify binary'sinin bulunup bulunmadığını kontrol et
    Bash: which graphify && graphify --version 2>/dev/null
-   - KURULU DEĞİLSE → yükle:
-     Bash: pip3 install graphifyy --break-system-packages
+
+   - KURULU DEĞİLSE → Homebrew Python ile yükle (macOS'ta pip3/python3 ≠ graphify'ın Python'u):
+     Bash: pip3 install graphifyy --break-system-packages 2>/dev/null \
+           || /opt/homebrew/bin/pip3 install graphifyy \
+           || brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
+
    - KURULUYSA → versiyonu kullanıcıya bildir (örn: "graphify 0.7.16 ✓")
-   - Güncelleme kontrolü:
+
+   # 2. Doğru Python interpreter'ı bul ve kaydet (KRITIK — macOS'ta system python3 ≠ graphify python)
+   # graphify binary'sinin shebang'ından doğru interpreter'ı oku:
+   Bash: GRAPHIFY_BIN=$(which graphify) && \
+         PYTHON=$(head -1 "$GRAPHIFY_BIN" | tr -d '#!') && \
+         "$PYTHON" -c "import graphify; print('OK')" 2>/dev/null \
+         || PYTHON=$(uv tool run graphifyy python -c "import sys; print(sys.executable)" 2>/dev/null) \
+         || PYTHON="python3"
+   # .graphify_python'u her zaman bu doğru Python ile oluştur:
+   "$PYTHON" -c "import sys; open('graphify-out/.graphify_python','w').write(sys.executable)"
+
+   # HATIRLA: macOS'ta `python3` = Xcode python → graphify import FAIL olur
+   # Doğru Python genellikle /opt/homebrew/opt/python@3.12/bin/python3.12
+
+   - Güncelleme kontrolü (isteğe bağlı):
      Bash: pip3 install --upgrade graphifyy --break-system-packages 2>&1 | grep -E "Successfully|already"
 
 1. Bash ile kontrol et: [ -f graphify-out/GRAPH_REPORT.md ]
