@@ -29,6 +29,7 @@ Activates the 5-phase workflow: Analyze Constraints → Design Architecture → 
 
 | File | Topic |
 |------|-------|
+| `ref-stm32-errata.md` | **Real-world errata, HAL bugs, GPIO speed limits, USB 48MHz, DMA DTCM, I2C hang** |
 | `ref-qspi-octospi-highspeed.md` | QSPI/OCTOSPI high-speed issues, sample shift, DLYB, dummy cycles |
 | `ref-communication-protocols.md` | I2C, SPI DMA, UART ring buffer, FDCAN |
 | `ref-rtos-patterns.md` | FreeRTOS & RTX5 task, ISR, mutex, event patterns |
@@ -37,3 +38,26 @@ Activates the 5-phase workflow: Analyze Constraints → Design Architecture → 
 | `ref-fault-handlers.md` | HardFault decode, BusFault, reset cause |
 | `ref-memory-optimization.md` | Compiler flags, memory pools, linker script |
 | `ref-mpu-trustzone.md` | MPU stack guard, non-cacheable DMA, TrustZone |
+| `ref-j1939.md` | SAE J1939: AC state machine, CMDT TP, DM1/DM11, FDCAN bit timing |
+| `ref-uds-iso14229.md` | ISO 14229 UDS: P2/P2*/S3 timing, Security Access, dual-bank OTA |
+
+## Errata Kontrol — Proje Analizi Workflow'u
+
+**Kural: İşlemci tespit edilince, kod incelemesinden ÖNCE errata kontrol et.**
+
+```
+1. stm32-families.md → MCU ailesini belirle
+2. ST errata sheet numarasını bul:
+     STM32H730/H750 → ES0480
+     STM32H7B0/H7A3 → ES0392
+     STM32F7        → ES0334
+     STM32F4        → ES0182
+     STM32G4        → ES0430
+     STM32L4        → ES0392
+3. ref-stm32-errata.md ile bilinen sorunları cross-check et
+4. Kritik errata varsa code review'e dahil et
+5. Şüpheli davranış varsa ST errata PDF'ini web'den getir ve doğrula
+```
+
+Kod yanlış görünse bile errata düzeyinde bir hardware/driver sorunu olabilir.
+Her review'da sadece kodun mantığı değil, donanım kısıtlamalarını da değerlendir.

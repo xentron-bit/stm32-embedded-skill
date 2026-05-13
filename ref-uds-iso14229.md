@@ -399,3 +399,448 @@ Yanıt:  59 02 09          → RSID + subfn + availabilityMask
 | 3E 80 görmezden gelme | suppress flag atlanıyor | bit7=1 → yanıt gönderme |
 | Flash yazma başarısız | Programming session yok | Önce `10 02`, sonra `34` gönder |
 | Security kilit | 3 hatalı key | 10+ saniye bekle, 0x37 NRC |
+
+---
+
+## P2 / P2* / S3 Timing — Üretim Implementasyonu
+
+ISO 14229-2 zamanlama parametreleri üretimde kritik:
+
+```
+P2     = ECU'nun istek alıp yanıt vermesi için max süre (default 50ms)
+P2*    = 0x78 NRC sonrası uzatılmış yanıt süresi (default 5000ms)
+S3     = Session timeout — Tester Present gelmezse ECU default'a döner (default 5000ms)
+```
+
+**0x78 (responsePending) NRC yönetimi:**
+```c
+/* ECU tarafı: uzun süren işlem (flash erase) için 0x78 döngüsü */
+void uds_handle_routine_erase(uint8_t *req, uint16_t len)
+{
+    /* Hemen 0x78 gönder — P2 dolmadan önce */
+    uint8_t pending[3] = { 0x7F, 0x31, 0x78 };
+    isotp_send(ECU_TX_ID, pending, 3);
+
+    uint32_t t_start = HAL_GetTick();
+    while (!flash_erase_done()) {
+        if ((HAL_GetTick() - t_start) % 2000U < 10U) {
+            /* Her ~2 saniyede 0x78 tekrarla — P2* (5000ms) dolmadan */
+            isotp_send(ECU_TX_ID, pending, 3);
+        }
+        HAL_Delay(10);
+    }
+    /* İşlem bitti — gerçek yanıt */
+    uint8_t ok[4] = { 0x71, 0x01, 0x02, 0x02 };
+    isotp_send(ECU_TX_ID, ok, 4);
+}
+
+/* Tester tarafı: P2* timeout yönetimi */
+#define P2_MS      50
+#define P2STAR_MS  5000
+
+typedef enum { WAIT_P2, WAIT_P2STAR } tester_wait_t;
+static tester_wait_t wait_mode = WAIT_P2;
+static uint32_t      resp_timer;
+
+void tester_rx(const uint8_t *data, uint16_t len)
+{
+    if (data[0] == 0x7F && len >= 3 && data[2] == 0x78) {
+        wait_mode  = WAIT_P2STAR;
+        resp_timer = HAL_GetTick();  /* P2* başlat */
+    } else {
+        wait_mode = WAIT_P2;
+        process_response(data, len);
+    }
+}
+
+bool tester_timeout(void)
+{
+    uint32_t limit = (wait_mode == WAIT_P2STAR) ? P2STAR_MS : P2_MS;
+    return (HAL_GetTick() - resp_timer) > limit;
+}
+```
+
+**S3 Timer — ECU tarafı:**
+```c
+#define S3_MS  5000U
+
+static uint32_t s3_last_rx;
+static bool     in_non_default_session;
+
+/* Her UDS mesajı alındığında çağrılır */
+void uds_refresh_s3(void) { s3_last_rx = HAL_GetTick(); }
+
+/* 1ms tick */
+void uds_s3_tick(void)
+{
+    if (!in_non_default_session) return;
+    if ((HAL_GetTick() - s3_last_rx) > S3_MS) {
+        /* Session timeout — default'a dön */
+        uds_transition_to_default_session();
+        security_unlocked = false;
+        in_non_default_session = false;
+    }
+}
+
+/* 0x3E handler */
+void uds_tester_present(const uint8_t *data, uint16_t len)
+{
+    uds_refresh_s3();
+    uint8_t subfn = data[1];
+    bool suppress = (subfn & 0x80U) != 0;  /* bit7: suppressPositiveResponse */
+    if (!suppress) {
+        uint8_t r[2] = { 0x7E, subfn & 0x7FU };
+        isotp_send(ECU_TX_ID, r, 2);
+    }
+}
+```
+
+---
+
+## Security Access (0x27) — Üretim Kalitesi
+
+TRNG seed, attempt counter ve lockout ile tam implementasyon:
+
+```c
+#define SA_MAX_ATTEMPTS   3
+#define SA_LOCKOUT_MS     10000U    /* 10 saniye — ISO 14229 minimum */
+#define SA_LEVEL_01       0x01      /* seed subfn */
+#define SA_LEVEL_02       0x02      /* key subfn */
+
+typedef struct {
+    uint32_t pending_seed;
+    uint8_t  failed_attempts;
+    uint32_t lockout_until_ms;
+    bool     unlocked;
+    bool     seed_sent;
+} sa_ctx_t;
+
+static sa_ctx_t sa;
+
+/* AES-CMAC veya OEM-spesifik algoritma — sabit XOR YASAK (J2534 test eder) */
+static uint32_t compute_key(uint32_t seed, uint8_t level)
+{
+    /* Örnek: HMAC-SHA256 (seed ∥ level) ile türetilmiş 32-bit key */
+    /* Gerçek projede: OEM secret + seed → CMAC */
+    (void)level;
+    return seed ^ 0xDEADBEEFUL;  /* placeholder — üretimde değiştir */
+}
+
+void uds_security_access(const uint8_t *data, uint16_t len)
+{
+    if (len < 2) { uds_send_nrc(0x27, 0x13); return; }
+    uint8_t subfn = data[1] & 0x7FU;
+
+    /* Lockout kontrolü */
+    if (sa.lockout_until_ms && HAL_GetTick() < sa.lockout_until_ms) {
+        uds_send_nrc(0x27, 0x37);  /* requiredTimeDelayNotExpired */
+        return;
+    }
+
+    if (subfn == SA_LEVEL_01) {            /* requestSeed */
+        if (sa.unlocked) {
+            uint8_t r[6] = { 0x67, 0x01, 0,0,0,0 };  /* seed=0: already unlocked */
+            isotp_send(ECU_TX_ID, r, 6);
+            return;
+        }
+        /* TRNG seed — STM32 RNG peripheral */
+        uint32_t rng_val;
+        if (HAL_RNG_GenerateRandomNumber(&hrng, &rng_val) != HAL_OK)
+            rng_val = HAL_GetTick() ^ (DWT->CYCCNT);  /* fallback */
+        sa.pending_seed = rng_val;
+        sa.seed_sent    = true;
+        uint8_t r[6] = {
+            0x67, 0x01,
+            (sa.pending_seed >> 24) & 0xFF,
+            (sa.pending_seed >> 16) & 0xFF,
+            (sa.pending_seed >>  8) & 0xFF,
+             sa.pending_seed        & 0xFF
+        };
+        isotp_send(ECU_TX_ID, r, 6);
+
+    } else if (subfn == SA_LEVEL_02) {     /* sendKey */
+        if (!sa.seed_sent) { uds_send_nrc(0x27, 0x24); return; }  /* requestSequenceError */
+        if (len < 6)        { uds_send_nrc(0x27, 0x13); return; }
+
+        uint32_t key_rx = ((uint32_t)data[2] << 24) | ((uint32_t)data[3] << 16)
+                        | ((uint32_t)data[4] <<  8) |  data[5];
+        uint32_t key_ex = compute_key(sa.pending_seed, SA_LEVEL_01);
+
+        if (key_rx == key_ex) {
+            sa.unlocked        = true;
+            sa.failed_attempts = 0;
+            sa.seed_sent       = false;
+            uint8_t r[2] = { 0x67, 0x02 };
+            isotp_send(ECU_TX_ID, r, 2);
+        } else {
+            sa.failed_attempts++;
+            sa.seed_sent = false;
+            if (sa.failed_attempts >= SA_MAX_ATTEMPTS) {
+                sa.lockout_until_ms = HAL_GetTick() + SA_LOCKOUT_MS;
+                sa.failed_attempts  = 0;
+                uds_send_nrc(0x27, 0x36);  /* exceededNumberOfAttempts */
+            } else {
+                uds_send_nrc(0x27, 0x35);  /* invalidKey */
+            }
+        }
+    } else {
+        uds_send_nrc(0x27, 0x12);  /* subFunctionNotSupported */
+    }
+}
+```
+
+---
+
+## STM32H7 Dual-Bank OTA — Tam Akış
+
+STM32H7 (H750, H730) dual-bank flash swap ile kesintisiz OTA:
+
+```
+Bank 1: 0x08000000 (aktif — çalışan uygulama)
+Bank 2: 0x08100000 (pasif — yeni firmware hedefi)
+
+OTA Akışı:
+  1. Tester → ExtendedDiag session (10 03)
+  2. Security Access (27 01 / 27 02)
+  3. Comm Control: normal mesajları durdur (28 03 01)
+  4. Request Download: Bank 2 başlangıcına (34)
+  5. Transfer Data: bloklar halinde (36 x N)
+  6. Request Transfer Exit (37)
+  7. Routine Control: CRC doğrula (31 01)
+  8. Routine Control: Bank swap ve reset (31 01)
+```
+
+**Adım 3 — Communication Control (0x28):**
+```c
+void uds_comm_control(const uint8_t *data, uint16_t len)
+{
+    uint8_t subfn    = data[1];  /* 0x03 = disableRxAndTx */
+    uint8_t comm_type = data[2]; /* 0x01 = normalCommunication */
+
+    if (subfn == 0x03) {
+        /* Programlama sırasında normal CAN mesajlarını durdur */
+        fdcan_set_tx_enable(false);   /* uygulama mesajları durdur */
+        uint8_t r[2] = { 0x68, 0x03 };
+        isotp_send(ECU_TX_ID, r, 2);
+    } else if (subfn == 0x00) {
+        fdcan_set_tx_enable(true);
+        uint8_t r[2] = { 0x68, 0x00 };
+        isotp_send(ECU_TX_ID, r, 2);
+    }
+}
+```
+
+**Adım 4-6 — RequestDownload / TransferData / RequestTransferExit:**
+```c
+static uint32_t flash_write_addr;
+static uint32_t flash_write_end;
+static uint8_t  block_seq;
+
+void uds_request_download(const uint8_t *data, uint16_t len)
+{
+    /* data: 34 00 44 [4B addr] [4B len] */
+    uint32_t addr = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16)
+                  | ((uint32_t)data[6] <<  8) |  data[7];
+    uint32_t size = ((uint32_t)data[8] << 24) | ((uint32_t)data[9] << 16)
+                  | ((uint32_t)data[10] << 8) |  data[11];
+
+    /* Bank 2 aralığı kontrolü */
+    if (addr < 0x08100000UL || (addr + size) > 0x08200000UL) {
+        uds_send_nrc(0x34, 0x31);  /* requestOutOfRange */
+        return;
+    }
+
+    flash_write_addr = addr;
+    flash_write_end  = addr + size;
+    block_seq        = 1;
+
+    /* D-Cache devre dışı bırak — flash yazma öncesi ZORUNLU */
+    SCB_DisableDCache();
+
+    /* Bank 2'yi sil — önce 0x78 gönder */
+    uint8_t pending[3] = { 0x7F, 0x34, 0x78 };
+    isotp_send(ECU_TX_ID, pending, 3);
+    HAL_FLASH_Unlock();
+    flash_erase_bank2();   /* blok eden operasyon */
+    HAL_FLASH_Lock();
+    SCB_EnableDCache();
+
+    uint8_t r[4] = { 0x74, 0x20, 0x02, 0x00 };  /* maxBlockSize = 0x200 (512 byte) */
+    isotp_send(ECU_TX_ID, r, 4);
+}
+
+void uds_transfer_data(const uint8_t *data, uint16_t len)
+{
+    uint8_t seq = data[1];
+    if (seq != block_seq) {
+        uds_send_nrc(0x36, 0x73);  /* wrongBlockSequenceCounter */
+        return;
+    }
+
+    uint16_t data_len = len - 2;  /* SID + seq header */
+    const uint8_t *payload = &data[2];
+
+    if (flash_write_addr + data_len > flash_write_end) {
+        uds_send_nrc(0x36, 0x31);
+        return;
+    }
+
+    /* 256-bit aligned write (STM32H7 flash write granularity = 32 byte) */
+    SCB_DisableDCache();
+    HAL_FLASH_Unlock();
+    for (uint16_t i = 0; i < data_len; i += 32) {
+        HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD,
+                          flash_write_addr + i,
+                          (uint32_t)(payload + i));
+    }
+    HAL_FLASH_Lock();
+    SCB_EnableDCache();
+
+    flash_write_addr += data_len;
+    block_seq = (block_seq + 1) % 0x100;
+
+    uint8_t r[2] = { 0x76, seq };
+    isotp_send(ECU_TX_ID, r, 2);
+}
+
+void uds_request_transfer_exit(void)
+{
+    uint8_t r[1] = { 0x77 };
+    isotp_send(ECU_TX_ID, r, 1);
+}
+```
+
+**Adım 7 — CRC Routine Control:**
+```c
+void uds_routine_crc_check(const uint8_t *data, uint16_t len)
+{
+    /* Routine ID 0xFF01 = CRC verify */
+    uint32_t addr   = /* data'dan parse */;
+    uint32_t size   = /* data'dan parse */;
+    uint32_t exp_crc = /* data'dan parse */;
+
+    uint32_t calc = crc32_calc((uint8_t *)addr, size);
+    uint8_t  status = (calc == exp_crc) ? 0x00 : 0x01;
+    uint8_t r[5] = { 0x71, 0x01, 0xFF, 0x01, status };
+    isotp_send(ECU_TX_ID, r, 5);
+}
+```
+
+**Adım 8 — Bank Swap:**
+```c
+void uds_routine_bank_swap(void)
+{
+    /* STM32H7 option bytes ile bank swap */
+    HAL_FLASH_Unlock();
+    HAL_FLASH_OB_Unlock();
+
+    FLASH_OBProgramInitTypeDef ob = {0};
+    HAL_FLASHEx_OBGetConfig(&ob);
+    ob.OptionType = OPTIONBYTE_USER;
+    ob.USERType   = OB_USER_SWAP_BANK;
+    /* XOR mevcut ayarı — bank 1↔2 toggle */
+    ob.USERConfig = (ob.USERConfig ^ OB_SWAP_BANK_ENABLE);
+    HAL_FLASHEx_OBProgram(&ob);
+
+    uint8_t r[1] = { 0x71 };  /* önce yanıt */
+    isotp_send(ECU_TX_ID, r, 1);
+    HAL_Delay(10);
+
+    HAL_FLASH_OB_Launch();  /* reset + bank swap — geri dönmez */
+}
+```
+
+---
+
+## ECU Reset (0x11) — Tip Tablosu
+
+```c
+void uds_ecu_reset(const uint8_t *data, uint16_t len)
+{
+    uint8_t reset_type = data[1];
+    uint8_t r[2] = { 0x51, reset_type };
+    isotp_send(ECU_TX_ID, r, 2);  /* önce yanıtla, sonra reset */
+    HAL_Delay(25);  /* yanıtın gönderilmesi için kısa bekleme */
+
+    switch (reset_type) {
+    case 0x01: /* hardReset — NVIC_SystemReset() */
+        NVIC_SystemReset();
+        break;
+    case 0x02: /* keyOffOnReset — güç döngüsü simülasyonu */
+        /* Uygulama spesifik: output pin ile güç kesme veya NVIC_SystemReset() */
+        NVIC_SystemReset();
+        break;
+    case 0x03: /* softReset — sadece yazılım state sıfırla, donanım değil */
+        /* Uygulama init fonksiyonlarını çağır, peripheral'ı sıfırlama */
+        app_soft_reset();
+        break;
+    default:
+        uds_send_nrc(0x11, 0x12);  /* subFunctionNotSupported */
+        return;
+    }
+}
+```
+
+---
+
+## AUTOSAR DCM vs Bare-Metal UDS Karşılaştırması
+
+| Özellik | AUTOSAR DCM | Bare-Metal Stack |
+|---------|------------|-----------------|
+| Complexity | Yüksek — BSW katmanları | Düşük — doğrudan kontrol |
+| Taşınabilirlik | Standart — ECU değişiminde aynı | Proje spesifik |
+| Timing yönetimi | Otomatik (P2, P2*, S3) | Manuel implementasyon şart |
+| Session yönetimi | ComM entegrasyonu | Uygulama sorumluluğu |
+| Security Access | SecOC entegrasyonu | Uygulama algoritması |
+| Flash programlama | FOTA modülü | Doğrudan HAL_FLASH |
+| Maliyet | AUTOSAR lisansı gerekli | Ücretsiz |
+| Uygun platform | AUTOSAR Classic (OEM araçlar) | Bare-metal, RTOS projeleri |
+
+**Bare-metal UDS minimal state machine:**
+```c
+typedef struct {
+    uint8_t  session;          /* 0x01/0x02/0x03 */
+    bool     security_unlocked;
+    uint32_t s3_timer;
+    uint32_t p2star_timer;
+    bool     waiting_p2star;
+} uds_state_t;
+
+static uds_state_t uds;
+
+void uds_tick_1ms(void)
+{
+    uds_s3_tick();   /* session timeout */
+    if (uds.waiting_p2star && (HAL_GetTick() - uds.p2star_timer) > 5000U) {
+        uds.waiting_p2star = false;
+        /* Tester P2* timeout — bağlantı kesildi */
+        uds_transition_to_default_session();
+    }
+}
+```
+
+---
+
+## OBD-II / ISO 15031 vs UDS (ISO 14229) Farkı
+
+```
+OBD-II (SAE J1979 / ISO 15031): Emission-related teşhis
+  - Mode 0x01: Current powertrain data (RPM, MAP, O2 sensor)
+  - Mode 0x02: Freeze frame data
+  - Mode 0x03: Stored emission DTCs
+  - Mode 0x09: Vehicle information (VIN, calibration IDs)
+  - Functional ID: 0x7DF, ECU yanıt: 0x7E8..0x7EF
+  - Herhangi bir tester okuyabilir — şifresiz
+
+UDS (ISO 14229): Full ECU diagnostics + programming
+  - SID 0x22: ReadDataByIdentifier — manufacturer DIDs dahil
+  - SID 0x27: Security Access — şifre korumalı
+  - SID 0x34/36/37: Flash programming
+  - Manufacturer CAN IDs (0x600..0x6FF yaygın, OEM tanımlar)
+
+Pratik fark:
+  - OBD-II scanner (ELM327, OBD-Link) OBD modlarına erişir
+  - UDS tester (PC+J2534 adapter, Kvaser) manufacturer DID ve programlama
+  - STM32 bare-metal: ikisini ayrı handler'larla uygula
+  - Fonksiyonel adres (0x7DF) her iki protokol için de yanıt vermeli
+```
