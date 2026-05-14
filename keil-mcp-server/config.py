@@ -9,6 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
 CONFIG_FILE = Path.home() / ".keil-mcp-config.json"
 
 # ── Search lists ────────────────────────────────────────────────────────────
@@ -127,9 +130,9 @@ def detect_all_tools() -> dict:
 
     missing = [k for k, v in cfg.items() if v is None and k not in ("openocd", "cubeprog", "gdb", "stlink_gdb")]
     if missing:
-        print(f"[keil-mcp] WARNING: tools not found: {missing}", flush=True)
+        _log(f"[keil-mcp] WARNING: tools not found: {missing}")
     for k, v in cfg.items():
-        print(f"[keil-mcp] {k}: {v or '(not found)'}", flush=True)
+        _log(f"[keil-mcp] {k}: {v or '(not found)'}")
     return cfg
 
 
