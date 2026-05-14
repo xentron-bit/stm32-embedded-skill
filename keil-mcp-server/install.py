@@ -54,7 +54,7 @@ def detect_tools():
     import config as cfg
     paths = cfg.reset_and_detect()
     found = {k: v for k, v in paths.items() if v}
-    missing = [k for k, v in paths.items() if not v and k not in ("openocd", "cubeprog")]
+    missing = [k for k, v in paths.items() if not v and k not in ("openocd", "cubeprog", "gdb", "stlink_gdb")]
     if missing:
         print(f"  WARNING: Tools not found: {missing}")
         print(f"  Install Keil / STM32 tools then re-run: python install.py")
