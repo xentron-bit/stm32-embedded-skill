@@ -41,7 +41,7 @@
 | STM32U3 | Cortex-M33 | TrustZone ULP, LPBAM, 160MHz | [STM32CubeU3](https://github.com/STMicroelectronics/STM32CubeU3) | [stm32u3xx-hal-driver](https://github.com/STMicroelectronics/stm32u3xx-hal-driver) |
 | STM32U5 | Cortex-M33 | TrustZone, LPBAM, 10 nA stop, 160MHz | [STM32CubeU5](https://github.com/STMicroelectronics/STM32CubeU5) | [stm32u5xx-hal-driver](https://github.com/STMicroelectronics/stm32u5xx-hal-driver) |
 
-### HAL1-Based — Wireless
+### HAL1-Based — Wireless (STM32)
 | Family | Core | Radio | GitHub Cube | HAL Driver |
 |---|---|---|---|---|
 | STM32WB  | Cortex-M4 + M0+ | BLE 5.2 + 802.15.4, 64MHz | [STM32CubeWB](https://github.com/STMicroelectronics/STM32CubeWB) | [stm32wbxx-hal-driver](https://github.com/STMicroelectronics/stm32wbxx-hal-driver) |
@@ -49,6 +49,32 @@
 | STM32WBA | Cortex-M33      | BLE 5.4, TrustZone, 100MHz | [STM32CubeWBA](https://github.com/STMicroelectronics/STM32CubeWBA) | [stm32wbaxx-hal-driver](https://github.com/STMicroelectronics/stm32wbaxx-hal-driver) |
 | STM32WL  | Cortex-M4 + M0+ | Sub-GHz (LoRa/FSK), 48MHz | [STM32CubeWL](https://github.com/STMicroelectronics/STM32CubeWL) | [stm32wlxx-hal-driver](https://github.com/STMicroelectronics/stm32wlxx-hal-driver) |
 | STM32WL3 | Cortex-M0+      | Sub-GHz ULP, 64MHz | [STM32CubeWL3](https://github.com/STMicroelectronics/STM32CubeWL3) | [stm32wl3x-hal-driver](https://github.com/STMicroelectronics/stm32wl3x-hal-driver) |
+
+### BlueNRG Series (ST BLE SoC — STM32 değil, ayrı ürün ailesi)
+
+> BlueNRG ailesi STM32 değildir — BLE odaklı bağımsız SoC'lar. Cortex-M0+ tabanlı, entegre RF, düşük güç. BLE stack radio CPU üzerinde koşar, ACI (HCI vendor extension) komutlarıyla kontrol edilir.
+
+| Part | Core | Flash/RAM | BLE | PHY | Özellikler | SDK |
+|------|------|-----------|-----|-----|------------|-----|
+| **BlueNRG-355** | Cortex-M0+ 64MHz | 512KB / 64KB | 5.4 | 1M, **2M**, Coded | Extended Adv, LE Audio hazır, PKA, AES | [x-cube-blemgr](https://github.com/STMicroelectronics/x-cube-blemgr) |
+| BlueNRG-LP | Cortex-M0+ 64MHz | 256KB / 64KB | 5.0 | 1M, 2M, Coded | Long Range, PKA | [BlueNRG-LP SDK](https://github.com/stm32-hotspot/BlueNRG_LP_HSE_CALIB) |
+| BlueNRG-LPS | Cortex-M0+ 32MHz | 192KB / 24KB | 5.0 | 1M, 2M, Coded | Küçük paket, düşük güç | — |
+| BlueNRG-2 | Cortex-M0  | 256KB / 24KB | 5.0 | 1M sınırlı | Eski nesil | — |
+
+**BlueNRG-355 Temel Farklar:**
+- `aci_gap_set_extended_advertising_enable()` — Extended Advertising (BLE 5.0+)
+- LE 2M PHY: `aci_le_set_phy()` ile 2 Mbps; teorik ~1.37 Mbps data throughput
+- Coded PHY (S=2 veya S=8): uzun menzil, düşük hız
+- MTU: HCI `ACI_ATT_EXCHANGE_MTU_REQ` + `aci_gatt_update_char_value_ext()` ile 247 byte payload
+- `ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_REQ` — bağlantı parametresi güncelleme
+- BLE Manager middleware: `x-cube-blemgr` (referans: [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md))
+
+**HSE Kalibrasyon (BlueNRG-LP/355):**
+```c
+/* 32.768 kHz dış kristal veya HSE — BLE timing için ±20 ppm şart */
+LL_RCC_HSE_SetCapacitorTuning(val);   /* 0-63 arası ayar */
+aci_hal_tone_start(0x0, 0x0);         /* RF tone ile RF analyzer doğrulama */
+```
 
 ---
 
