@@ -64,17 +64,17 @@ def detect_tools():
 # -- 3. MCP registration ------------------------------------------------------
 
 MCP_ENTRY = {
+    "type": "stdio",
     "command": PYTHON,
     "args": [str(SERVER_SCRIPT)],
     "env": {}
 }
 
 
-def _write_config(cfg_path: Path):
-    if not cfg_path.exists():
-        return False
+def _write_claude_json(cfg_path: Path):
+    """Write to ~/.claude.json (Claude Code CLI user-scope MCP config)."""
     try:
-        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
     except (json.JSONDecodeError, OSError):
         data = {}
     data.setdefault("mcpServers", {})["keil-mcp"] = MCP_ENTRY
@@ -82,23 +82,41 @@ def _write_config(cfg_path: Path):
     return True
 
 
+def _write_desktop_config(cfg_path: Path):
+    """Write to Claude Desktop claude_desktop_config.json (no type field needed)."""
+    if not cfg_path.exists():
+        return False
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    entry = {k: v for k, v in MCP_ENTRY.items() if k != "type"}
+    data.setdefault("mcpServers", {})["keil-mcp"] = entry
+    cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return True
+
+
 def register_mcp():
     print("\n[3/4] Registering MCP server with Claude...")
-    targets = [Path.home() / ".claude" / "settings.json"]
-    if appdata := os.environ.get("APPDATA"):
-        targets.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
-
     registered = 0
-    for t in targets:
-        if _write_config(t):
-            print(f"  OK  -> {t}")
+
+    # Claude Code CLI: ~/.claude.json (root of home, NOT inside ~/.claude/)
+    cli_json = Path.home() / ".claude.json"
+    if _write_claude_json(cli_json):
+        print(f"  OK  -> {cli_json}")
+        registered += 1
+
+    # Claude Desktop (optional)
+    if appdata := os.environ.get("APPDATA"):
+        desktop = Path(appdata) / "Claude" / "claude_desktop_config.json"
+        if _write_desktop_config(desktop):
+            print(f"  OK  -> {desktop}")
             registered += 1
         else:
-            print(f"  skip (not found) -> {t}")
+            print(f"  skip (not found) -> {desktop}")
 
     if registered == 0:
-        print("  WARNING: No Claude config files found.")
-        print("  Make sure Claude Code CLI is installed (~/.claude/settings.json must exist).")
+        print("  WARNING: Could not register MCP server.")
 
 
 # -- 4. Summary ---------------------------------------------------------------
