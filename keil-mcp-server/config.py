@@ -14,69 +14,79 @@ CONFIG_FILE = Path.home() / ".keil-mcp-config.json"
 # ── Search lists ────────────────────────────────────────────────────────────
 
 def _cubemx_candidates() -> list[str]:
+    import os
+    local = os.environ.get("LOCALAPPDATA", "")
     return [
         r"C:\ST\STM32CubeMX\STM32CubeMX.exe",
         r"C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeMX\STM32CubeMX.exe",
         r"C:\Program Files (x86)\STMicroelectronics\STM32Cube\STM32CubeMX\STM32CubeMX.exe",
-        *glob.glob(
-            r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins"
-            r"\com.st.stm32cube.ide.mcu.externaltools.cubemx*\tools\bin\STM32CubeMX.exe"
-        ),
+        *glob.glob(r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.cubemx*\tools\bin\STM32CubeMX.exe"),
         *glob.glob(r"C:\ST\STM32CubeIDE*\STM32CubeMX\STM32CubeMX.exe"),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeMX" / "STM32CubeMX.exe")) if local else []),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeIDE*" / "STM32CubeIDE" / "plugins" / "com.st.stm32cube.ide.mcu.externaltools.cubemx*" / "tools" / "bin" / "STM32CubeMX.exe")) if local else []),
     ]
 
 
 def _uv4_candidates() -> list[str]:
+    local = str(Path.home().parent.parent / "AppData" / "Local")  # fallback
+    import os
+    local = os.environ.get("LOCALAPPDATA", local)
     return [
         r"C:\Keil_v5\UV4\UV4.exe",
         r"C:\Keil\UV4\UV4.exe",
         r"C:\Program Files\ARM\Keil\UV4\UV4.exe",
         r"C:\Program Files (x86)\Keil\UV4\UV4.exe",
+        str(Path(local) / "Keil_v5" / "UV4" / "UV4.exe"),
+        str(Path(local) / "Keil" / "UV4" / "UV4.exe"),
+        *glob.glob(str(Path(local) / "Keil*" / "UV4" / "UV4.exe")),
     ]
 
 
 def _stlink_gdb_candidates() -> list[str]:
+    import os
+    local = os.environ.get("LOCALAPPDATA", "")
     return [
-        *glob.glob(
-            r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins"
-            r"\com.st.stm32cube.ide.mcu.externaltools.stlink-gdb-server*"
-            r"\tools\bin\ST-LINK_gdbserver.exe"
-        ),
+        *glob.glob(r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.stlink-gdb-server*\tools\bin\ST-LINK_gdbserver.exe"),
         r"C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\ST-LINK_gdbserver.exe",
         r"C:\ST\STM32CubeProgrammer\bin\ST-LINK_gdbserver.exe",
         *glob.glob(r"C:\ST\STM32CubeProgrammer*\bin\ST-LINK_gdbserver.exe"),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeIDE*" / "STM32CubeIDE" / "plugins" / "com.st.stm32cube.ide.mcu.externaltools.stlink-gdb-server*" / "tools" / "bin" / "ST-LINK_gdbserver.exe")) if local else []),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeProgrammer*" / "bin" / "ST-LINK_gdbserver.exe")) if local else []),
     ]
 
 
 def _gdb_candidates() -> list[str]:
+    import os
+    local = os.environ.get("LOCALAPPDATA", "")
     return [
-        *glob.glob(
-            r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins"
-            r"\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32*"
-            r"\tools\bin\arm-none-eabi-gdb.exe"
-        ),
+        *glob.glob(r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32*\tools\bin\arm-none-eabi-gdb.exe"),
         r"C:\Keil_v5\ARM\ARMCLANG\bin\arm-none-eabi-gdb.exe",
         *glob.glob(r"C:\Program Files (x86)\GNU Arm Embedded Toolchain\*\bin\arm-none-eabi-gdb.exe"),
         *glob.glob(r"C:\Program Files\GNU Arm Embedded Toolchain\*\bin\arm-none-eabi-gdb.exe"),
+        *(glob.glob(str(Path(local) / "Keil_v5" / "ARM" / "ARMCLANG" / "bin" / "arm-none-eabi-gdb.exe")) if local else []),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeIDE*" / "STM32CubeIDE" / "plugins" / "com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32*" / "tools" / "bin" / "arm-none-eabi-gdb.exe")) if local else []),
     ]
 
 
 def _openocd_candidates() -> list[str]:
+    import os
+    local = os.environ.get("LOCALAPPDATA", "")
     return [
         r"C:\OpenOCD\bin\openocd.exe",
         r"C:\Program Files\OpenOCD\bin\openocd.exe",
-        *glob.glob(
-            r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins"
-            r"\com.st.stm32cube.ide.mcu.externaltools.openocd*\tools\bin\openocd.exe"
-        ),
+        *glob.glob(r"C:\ST\STM32CubeIDE_*\STM32CubeIDE\plugins\com.st.stm32cube.ide.mcu.externaltools.openocd*\tools\bin\openocd.exe"),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeIDE*" / "STM32CubeIDE" / "plugins" / "com.st.stm32cube.ide.mcu.externaltools.openocd*" / "tools" / "bin" / "openocd.exe")) if local else []),
     ]
 
 
 def _cubeprog_candidates() -> list[str]:
+    import os
+    local = os.environ.get("LOCALAPPDATA", "")
     return [
         r"C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe",
         r"C:\ST\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe",
         *glob.glob(r"C:\ST\STM32CubeProgrammer*\bin\STM32_Programmer_CLI.exe"),
+        *(glob.glob(str(Path(local) / "ST" / "STM32CubeProgrammer*" / "bin" / "STM32_Programmer_CLI.exe")) if local else []),
     ]
 
 
