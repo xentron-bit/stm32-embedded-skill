@@ -122,7 +122,8 @@ if ($PYTHON) {
 # ════════════════════════════════════════════════════════════════════════════
 Print-Header (msg "Step 2/4 - Git" "Adim 2/4 - Git")
 
-$gitExe = (Get-Command git -ErrorAction SilentlyContinue)?.Source
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+$gitExe = if ($gitCmd) { $gitCmd.Source } else { $null }
 
 if ($gitExe) {
     $gitVer = & git --version 2>&1
@@ -135,7 +136,8 @@ if ($gitExe) {
           --accept-source-agreements --accept-package-agreements --silent
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("Path","User")
-    $gitExe = (Get-Command git -ErrorAction SilentlyContinue)?.Source
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    $gitExe = if ($gitCmd) { $gitCmd.Source } else { $null }
     if ($gitExe) {
         $gitVer = & git --version 2>&1
         Print-OK "$gitVer"
