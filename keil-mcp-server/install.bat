@@ -81,9 +81,9 @@ if errorlevel 1 (
 echo   [OK]  Download complete
 
 if exist "%EXTRACT%" rd /s /q "%EXTRACT%"
-if exist "%DEST%"    rd /s /q "%DEST%"
 tar -xf "%ZIP_FILE%" -C "%TEMP%"
-move "%EXTRACT%\keil-mcp-server" "%DEST%" >nul
+if not exist "%DEST%" mkdir "%DEST%"
+xcopy /E /Y /Q "%EXTRACT%\keil-mcp-server\*" "%DEST%\" >nul
 del "%ZIP_FILE%" 2>nul
 if exist "%EXTRACT%" rd /s /q "%EXTRACT%"
 echo   [OK]  %DEST%
