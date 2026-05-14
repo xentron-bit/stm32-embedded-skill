@@ -125,7 +125,7 @@ def detect_all_tools() -> dict:
         "cubeprog":  _find_first(_cubeprog_candidates()),  # optional
     }
 
-    missing = [k for k, v in cfg.items() if v is None and k not in ("openocd", "cubeprog")]
+    missing = [k for k, v in cfg.items() if v is None and k not in ("openocd", "cubeprog", "gdb", "stlink_gdb")]
     if missing:
         print(f"[keil-mcp] WARNING: tools not found: {missing}", flush=True)
     for k, v in cfg.items():
