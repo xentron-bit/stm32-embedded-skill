@@ -58,13 +58,27 @@ uint8_t ring_get(Ring_t *r)         { return r->buf[r->tail++]; }
 ## Stack Painting (HWM detection without RTOS)
 
 ```c
+/* Cortex-M stack grows DOWNWARD. Paint the UNUSED portion (from STACK_BOTTOM
+ * up to a safe margin below current SP) — NEVER paint from SP upward toward
+ * STACK_TOP, which would overwrite live frames (return addresses!) and
+ * crash on the next instruction.
+ *
+ * Call once from main() before tasks/ISRs use the stack significantly. */
+extern uint32_t _estack;          /* linker symbol: STACK_TOP */
+#define STACK_TOP    ((uint32_t)&_estack)
+#define STACK_SIZE   0x4000U      /* must match linker */
+#define STACK_BOTTOM (STACK_TOP - STACK_SIZE)
+
 void paint_stack(void) {
-    uint32_t sp; __asm("MOV %0, SP" : "=r"(sp));
-    for (uint32_t a = sp; a < STACK_TOP; a += 4) *(uint32_t*)a = 0xDEADBEEF;
+    uint32_t sp; __asm volatile("MOV %0, SP" : "=r"(sp));
+    /* Leave a 64-byte safety margin below current SP */
+    for (uint32_t a = STACK_BOTTOM; a + 64U < sp; a += 4U) {
+        *(volatile uint32_t *)a = 0xDEADBEEFU;
+    }
 }
 uint32_t stack_used(void) {
-    uint32_t a = STACK_TOP - STACK_SIZE;
-    while (*(uint32_t*)a == 0xDEADBEEF) a += 4;
+    uint32_t a = STACK_BOTTOM;
+    while (a < STACK_TOP && *(volatile uint32_t *)a == 0xDEADBEEFU) a += 4U;
     return STACK_TOP - a;
 }
 ```
@@ -72,10 +86,16 @@ uint32_t stack_used(void) {
 ## Linker Script Essentials
 
 ```ld
+/* Sizes below are STM32H7x3 (H743/H753/H750). Verify per part — H730 has
+ * smaller AXI (320K), H7A3 has different layout. DTCM is 128K on the entire
+ * H7 family; ITCM is 64K. DTCM is CPU-only — DMA1/DMA2 CANNOT access it
+ * (only MDMA can). Put DMA buffers in AXI or D2 SRAM. */
 MEMORY {
-    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 512K
-    DTCM  (rwx) : ORIGIN = 0x20000000, LENGTH = 64K   /* M7: no cache, ISR use */
-    AXI   (rwx) : ORIGIN = 0x24000000, LENGTH = 512K  /* M7: cached, DMA use */
+    FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 2048K
+    ITCM  (rx)  : ORIGIN = 0x00000000, LENGTH = 64K   /* M7 ITCM */
+    DTCM  (rwx) : ORIGIN = 0x20000000, LENGTH = 128K  /* M7 DTCM, CPU-only */
+    AXI   (rwx) : ORIGIN = 0x24000000, LENGTH = 512K  /* cached, DMA OK via MDMA */
+    D2_S1 (rwx) : ORIGIN = 0x30000000, LENGTH = 128K  /* DMA1/DMA2 accessible */
 }
 
 SECTIONS {

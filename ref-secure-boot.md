@@ -132,11 +132,24 @@ bool verify_firmware_signature(const fw_image_header_t *hdr, const uint8_t *fw_d
     /* 3. Verify hash matches header */
     if (memcmp(computed_hash, hdr->sha256, 32) != 0) return false;
 
-    /* 4. Verify ECDSA signature using PKA */
-    verify_in.primeOrderSize = 32;
-    verify_in.modulusSize    = 32;
-    verify_in.coefSign       = 0;              /* P-256 a = -3 */
-    verify_in.coef           = (uint8_t*)p256_a;
+    /* 4. Verify ECDSA signature using PKA.
+     *
+     * CRITICAL — both size fields are in BITS, not bytes (UM2178 / PKA HAL).
+     * For NIST P-256, primeOrderSize = modulusSize = 256.
+     *
+     * For curve coefficient `a` (= -3 for P-256):
+     *   coefSign = 1, coef points to value |a| = 3
+     *      OR
+     *   coefSign = 0, coef points to (p - 3) — i.e. supply a in unsigned form
+     *
+     * The previous code used coefSign=0 while pointing to a literal "-3" or
+     * to a constant labeled p256_a — verification would silently fail
+     * (signature always invalid) and the secure-boot chain would reject all
+     * firmware including legitimate releases. */
+    verify_in.primeOrderSize = 256;
+    verify_in.modulusSize    = 256;
+    verify_in.coefSign       = 1;
+    verify_in.coef           = (uint8_t*)p256_a_abs;   /* the value 3 */
     verify_in.modulus        = (uint8_t*)p256_p;
     verify_in.basePointX     = (uint8_t*)p256_Gx;
     verify_in.basePointY     = (uint8_t*)p256_Gy;
@@ -184,31 +197,55 @@ void otfdec_init(void)
 ## Anti-Rollback
 
 ```c
-/* Version stored in OTP fuses (one-time programmable) */
-/* Each version increment burns one more fuse bit */
-/* Never allow installing firmware older than burned version */
+/* Version stored in OTP fuses (one-time programmable).
+ * Each version increment CLEARS one more fuse bit (1 → 0 transition).
+ * STM32 flash including OTP ships ERASED = 0xFFFFFFFF; programming can
+ * only flip bits from 1 → 0. So:
+ *   "burned bits" per word = 32 - popcount(word)
+ *   "remaining (still-1) bits" per word = popcount(word)
+ *
+ * The previous code returned popcount(word) — the *inverse* of what it
+ * claimed to measure. Anti-rollback was disabled: as more versions burned
+ * fewer bits remained set, so the reported "min version" went DOWN.
+ *
+ * H7 OTP block is at 0x08FFF000 (1 KB), inside the system flash mapping —
+ * NOT at 0x1FFx_xxxx (that's system bootloader). RM0433 §4.3.13. */
 
-#define OTP_VERSION_BASE_ADDR  0x1FF80000   /* H7 OTP area */
-#define OTP_VERSION_WORDS      8            /* 8 words = 256 version bits */
+#define OTP_VERSION_BASE_ADDR  0x08FFF000U  /* STM32H743/H750/H730 OTP */
+#define OTP_VERSION_WORDS      8            /* 8 × 32 = 256 burnable bits */
 
 uint32_t get_hw_min_version(void)
 {
-    /* Count set bits in OTP — each set bit = one version level */
-    uint32_t count = 0;
+    /* Count CLEARED bits — each cleared bit = one accepted version level */
+    uint32_t burned = 0;
     for (int i = 0; i < OTP_VERSION_WORDS; i++) {
         uint32_t word = *(__IO uint32_t*)(OTP_VERSION_BASE_ADDR + i * 4);
-        count += __builtin_popcount(word);
+        burned += (32U - (uint32_t)__builtin_popcount(word));
     }
-    return count;
+    return burned;
 }
 
 void burn_version_bit(void)
 {
-    /* Find first zero bit, burn it */
-    /* OTP burn: write 0xFFFFFFFF with one bit cleared */
-    /* NOTE: OTP is permanent — cannot undo */
+    /* OTP burn: program a 256-bit (H7) flash word with ONE bit cleared.
+     * OTP is permanent — cannot undo. Find the first OTP word that still
+     * has set bits and clear the lowest one. */
     HAL_FLASH_Unlock();
-    /* H7: use HAL_FLASH_Program with FLASH_TYPEPROGRAM_FLASHWORD */
+    for (uint32_t i = 0; i < OTP_VERSION_WORDS; i++) {
+        uint32_t addr = OTP_VERSION_BASE_ADDR + i * 4U;
+        uint32_t cur  = *(__IO uint32_t*)addr;
+        if (cur == 0U) continue;
+        uint32_t lsb_set = cur & (uint32_t)(-(int32_t)cur);  /* lowest set bit */
+        uint32_t flash_word[8] = { 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU,
+                                   0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU, 0xFFFFFFFFU };
+        /* H7 programs 256 bits at once; clearing one bit in one of the
+         * eight 32-bit lanes is the smallest possible burn. */
+        flash_word[i & 7U] = ~lsb_set;
+        HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD,
+                          OTP_VERSION_BASE_ADDR + (i & ~7U) * 4U,
+                          (uint32_t)flash_word);
+        break;
+    }
     HAL_FLASH_Lock();
 }
 

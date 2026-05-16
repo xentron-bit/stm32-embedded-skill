@@ -183,8 +183,14 @@ float ic_get_frequency_hz(uint32_t timer_clk_hz)
 
 int32_t encoder_get_count(TIM_HandleTypeDef *htim)
 {
-    /* Signed 32-bit from 16-bit counter — track overflows if needed */
-    return (int32_t)(int16_t)__HAL_TIM_GET_COUNTER(htim);
+    /* TIM2 and TIM5 on F4/F7/H7 are 32-bit timers; the rest are 16-bit.
+     * Casting via (int16_t) truncates 32-bit timers to 16 bits and loses
+     * three bytes of position — use the correct width for your timer. */
+    uint32_t raw = __HAL_TIM_GET_COUNTER(htim);
+    if (IS_TIM_32B_COUNTER_INSTANCE(htim->Instance)) {
+        return (int32_t)raw;          /* TIM2 / TIM5: full 32-bit */
+    }
+    return (int32_t)(int16_t)raw;     /* 16-bit timers: sign-extend */
 }
 
 void encoder_reset(TIM_HandleTypeDef *htim)
@@ -274,9 +280,22 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
     int32_t raw = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
 
-    /* Convert: Vref=3.3V, 12-bit, shunt=10mΩ, gain=20 */
-    /* V_shunt = raw * 3300 / 4095 / 20 mV → I = V/R mA */
-    int32_t current_ma = (int32_t)((raw * 3300L) / (4095L * 20L * 10));
+    /* Vref=3300 mV, 12-bit, shunt=10 mΩ, INA-style gain=20.
+     *   V_adc_mV   = raw * 3300 / 4096           (NOT 4095; ratiometric uses 2^N)
+     *   V_shunt_mV = V_adc_mV / gain
+     *   I_mA       = V_shunt_mV * 1000 / R_mΩ
+     * Combined: I_mA = raw * 3300 * 1000 / (4096 * gain * R_mΩ)
+     *
+     * The previous formula
+     *     (raw * 3300) / (4095 * 20 * 10)
+     * dropped the *1000 factor → reported current was 100× SMALLER than
+     * actual. On a motor with 10 A protection threshold the code only
+     * tripped at 1 kA — silent loss of overcurrent protection. */
+    const int32_t VREF_MV = 3300;
+    const int32_t GAIN    = 20;
+    const int32_t R_MOHM  = 10;
+    int32_t current_ma =
+        (int32_t)((raw * VREF_MV * 1000L) / (4096L * GAIN * R_MOHM));
 
     motor_current_update(current_ma);
 }
@@ -418,11 +437,16 @@ void hrtim_init_buck(HRTIM_HandleTypeDef *hhrtim)
     };
     HAL_HRTIM_WaveformTimerConfig(hhrtim, HRTIM_TIMERINDEX_TIMER_A, &timer_cfg);
 
-    /* Set period (100 kHz) and compare (50% duty) */
+    /* Set period (100 kHz) and compare (50% duty).
+     * HRTIM prescaler macros are HRTIM_PRESCALERRATIO_DIV1 … _DIV4 — the
+     * "MUL32" name does not exist. _DIV1 keeps the internal ×32 multiplier
+     * active, giving f_HRTIM = HCLK × 32 (5.44 GHz on G4 @ 170 MHz,
+     * 4.6 GHz on H7 @ 144 MHz). PERIOD register valid range is 0x0060 …
+     * 0xFFDF — do not program 0xFFFF (illegal). */
     HRTIM_TimeBaseCfgTypeDef tb = {
-        .Period         = 54400,          /* 5.44 GHz / 100 kHz */
+        .Period         = 54400,          /* 5.44 GHz / 100 kHz = 54400 */
         .RepetitionCounter = 0,
-        .PrescalerRatio = HRTIM_PRESCALERRATIO_MUL32,
+        .PrescalerRatio = HRTIM_PRESCALERRATIO_DIV1,
         .Mode           = HRTIM_MODE_CONTINUOUS,
     };
     HAL_HRTIM_TimeBaseConfig(hhrtim, HRTIM_TIMERINDEX_TIMER_A, &tb);

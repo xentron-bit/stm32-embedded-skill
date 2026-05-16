@@ -19,7 +19,9 @@
 ```c
 /* Store at fixed address in last flash sector */
 #define FW_META_ADDR   0x080FC000UL
-#define FW_META_MAGIC  0xF1RMWARE
+#define FW_META_MAGIC  0xF15A57D0UL   /* arbitrary 32-bit constant — the
+                                        previous spelling "0xF1RMWARE" is
+                                        not a valid hex literal */
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;          /* FW_META_MAGIC if valid */
@@ -170,12 +172,44 @@ void app_jump(uint32_t app_addr)
 ## Application: Signal Successful Boot
 
 ```c
-/* Application calls this after all peripherals initialized successfully */
+/* Application calls this after all peripherals initialized successfully.
+ *
+ * IMPORTANT: flash is read-only by default; you CANNOT clear boot_count
+ * with a direct pointer assignment (`FW_META->boot_count = 0` faults).
+ * The flash page holding the metadata must be re-programmed.
+ *
+ * Two strategies:
+ *   (a) Reserve metadata on its OWN flash page; on each "clear", erase the
+ *       page then re-write the whole struct with boot_count=0.
+ *   (b) Store boot_count in BKPSRAM / RTC backup register / option byte —
+ *       avoids flash wear; recommended for production.
+ *
+ * Below is strategy (a), keeping the metadata page intact otherwise.
+ */
 void fw_boot_success(void)
 {
+    FwMetadata_t shadow;
+    memcpy(&shadow, (const void *)FW_META, sizeof(shadow));
+    shadow.boot_count = 0;
+
     HAL_FLASH_Unlock();
-    /* Clear boot_count — bootloader won't enter recovery on next reset */
-    FW_META->boot_count = 0;
+    FLASH_EraseInitTypeDef erase = {
+        .TypeErase    = FLASH_TYPEERASE_SECTORS,
+        .Banks        = FLASH_BANK_1,
+        .Sector       = FW_META_SECTOR,  /* page/sector that contains FW_META_ADDR */
+        .NbSectors    = 1,
+        .VoltageRange = FLASH_VOLTAGE_RANGE_3,
+    };
+    uint32_t err = 0;
+    HAL_FLASHEx_Erase(&erase, &err);
+
+    /* Re-program metadata (family-specific granularity — H7=256-bit,
+     * H7A3=128-bit, F4=word/halfword/byte selectable). */
+    for (uint32_t i = 0; i < sizeof(shadow); i += FLASH_WORD_BYTES) {
+        HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD,
+                          FW_META_ADDR + i,
+                          (uint32_t)((const uint8_t *)&shadow + i));
+    }
     HAL_FLASH_Lock();
 }
 ```
@@ -197,10 +231,15 @@ void dual_bank_swap_and_reset(void)
     HAL_FLASHEx_OBGetConfig(&ob);
     ob.OptionType = OPTIONBYTE_USER;
     ob.USERType   = OB_USER_SWAP_BANK;
-    ob.USERConfig = (ob.USERConfig & ~OB_SWAP_BANK_ENABLE) ^
-                    OB_SWAP_BANK_ENABLE;  /* toggle swap bit */
+    /* Toggle the swap-bank bit. The previous expression
+     *   (USERConfig & ~OB_SWAP_BANK_ENABLE) ^ OB_SWAP_BANK_ENABLE
+     * always SET the bit (mask-out then OR-equivalent), so the second OTA
+     * cycle could never swap back. A simple XOR toggles correctly. */
+    ob.USERConfig = (ob.USERConfig ^ OB_SWAP_BANK_ENABLE);
 
     HAL_FLASHEx_OBProgram(&ob);
+    HAL_FLASH_OB_Lock();
+    HAL_FLASH_Lock();
     HAL_FLASH_OB_Launch();  /* triggers system reset */
 }
 ```
@@ -216,10 +255,35 @@ void system_bootloader_activate(void)
     HAL_RCC_DeInit();
     SysTick->CTRL = 0;
 
-    /* F4 / F7 / H7: system memory at 0x1FFF0000 */
-    /* L4 / G4 / U5: system memory at 0x1FFF0000 */
-    /* Check DS for exact address per family      */
+    /* System-memory bootloader base is FAMILY-SPECIFIC (AN2606).
+     * Setting a single hardcoded 0x1FFF0000 is WRONG for F7/H7/U5/L5 — the
+     * CPU will jump into unmapped flash and HardFault.
+     *
+     *   STM32F0/F1/F3/F4   : 0x1FFF0000   (most parts; verify AN2606)
+     *   STM32F7            : 0x1FF00000
+     *   STM32G0/G4         : 0x1FFF0000
+     *   STM32H7 (H743/53)  : 0x1FF09800
+     *   STM32H7 (H7A3/B3)  : 0x1FF00000
+     *   STM32H7 (H730/750) : 0x1FF09800
+     *   STM32H5  (H563/73) : 0x0BF87000
+     *   STM32L0/L1/L4      : 0x1FFF0000
+     *   STM32L5/U5         : 0x0BF90000   (TrustZone-aware bootloader)
+     *   STM32WB/WBA        : 0x1FFF0000 / 0x0BF88000 (check DS)
+     * Always cross-check with AN2606 §5 table for the exact part. */
+#if   defined(STM32F7)
+    const uint32_t SYS_MEM = 0x1FF00000UL;
+#elif defined(STM32H743xx) || defined(STM32H753xx) || \
+      defined(STM32H730xx) || defined(STM32H750xx)
+    const uint32_t SYS_MEM = 0x1FF09800UL;
+#elif defined(STM32H7A3xx) || defined(STM32H7B0xx) || defined(STM32H7B3xx)
+    const uint32_t SYS_MEM = 0x1FF00000UL;
+#elif defined(STM32H5)
+    const uint32_t SYS_MEM = 0x0BF87000UL;
+#elif defined(STM32L5) || defined(STM32U5)
+    const uint32_t SYS_MEM = 0x0BF90000UL;
+#else  /* F0/F1/F3/F4/G0/G4/L0/L1/L4 (most parts) */
     const uint32_t SYS_MEM = 0x1FFF0000UL;
+#endif
 
     __set_MSP(*(volatile uint32_t *)SYS_MEM);
     ((void (*)(void))(*(volatile uint32_t *)(SYS_MEM + 4)))();

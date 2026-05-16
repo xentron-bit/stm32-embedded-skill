@@ -67,15 +67,19 @@ DLYB; PVT (Process-Voltage-Temperature) bağımlı analog bir gecikme hattıdır
 ### 3a. Fast Tuning (hızlı, üretimde yeterli)
 
 ```c
-HAL_OSPI_DLYB_CfgTypeDef dlyb_cfg;
+/* DLYB lives in a SEPARATE peripheral driver (stm32hxx_hal_dlyb.c). The
+ * correct API is HAL_DLYB_* with a DLYB_OCTOSPIx handle, NOT HAL_OSPI_DLYB_*
+ * (which does not exist). See ST AN5050 §4.4 and STM32CubeH7 example
+ * DLYB_OSPI_NOR_FastTuning. */
+HAL_DLYB_CfgTypeDef dlyb_cfg;
 
-/* Adım 1: DLYB'yi etkinleştir */
-if (HAL_OSPI_DLYB_GetClockPeriod(&hospi, &dlyb_cfg) != HAL_OK)
+/* Step 1: probe input clock period (auto-calibrates DLYB taps) */
+if (HAL_DLYB_GetClockPeriod(DLYB_OCTOSPI1, &dlyb_cfg) != HAL_OK)
     Error_Handler();
 
-/* Adım 2: Merkezi faz noktasını bul ve uygula */
-dlyb_cfg.PhaseSel /= 2;  /* faz ortasına getir */
-if (HAL_OSPI_DLYB_SetConfig(&hospi, &dlyb_cfg) != HAL_OK)
+/* Step 2: centre the sampling phase */
+dlyb_cfg.PhaseSel /= 2U;
+if (HAL_DLYB_SetConfig(DLYB_OCTOSPI1, &dlyb_cfg) != HAL_OK)
     Error_Handler();
 ```
 
@@ -88,7 +92,7 @@ ST örnek kodu: `DLYB_OSPI_NOR_FastTuning` ve `DLYB_OSPI_PSRAM_Exhaustive` (STM3
 uint8_t window_start = 0, window_end = 0;
 for (uint8_t ph = 0; ph < MAX_PHASE; ph++) {
     dlyb_cfg.PhaseSel = ph;
-    HAL_OSPI_DLYB_SetConfig(&hospi, &dlyb_cfg);
+    HAL_DLYB_SetConfig(DLYB_OCTOSPI1, &dlyb_cfg);
     if (ospi_verify_read() == HAL_OK) {
         if (!window_start) window_start = ph;
         window_end = ph;
@@ -96,7 +100,7 @@ for (uint8_t ph = 0; ph < MAX_PHASE; ph++) {
 }
 /* Pencerenin ortasına ayarla */
 dlyb_cfg.PhaseSel = (window_start + window_end) / 2;
-HAL_OSPI_DLYB_SetConfig(&hospi, &dlyb_cfg);
+HAL_DLYB_SetConfig(DLYB_OCTOSPI1, &dlyb_cfg);
 ```
 
 > **Uyarı:** VCore (voltaj ölçeği) veya çalışma sıcaklığı değiştiğinde DLYB yeniden kalibre edilmeli. CubeMX bug: DLYB konfigürasyonu V6.12.0'dan önce yanlış üretiliyordu — güncelle.
@@ -180,14 +184,20 @@ cmd.DataMode            = HAL_OSPI_DATA_4_LINES;
 Bazı STM32 serilerinde (özellikle F4/F7 QUADSPI) memory-mapped modda prescaler **çift sayı** olmalıdır.
 
 ```c
-/* Kural: Memory Mapped Mode'da prescaler = çift sayı */
-/* 200 MHz kernel clock, 40 MHz QSPI → prescaler = 4 (200/5=40 DEĞİL → 200/(4+1)=40 doğru) */
+/* QUADSPI ve OCTOSPI prescaler alanlarının HER İKİSİ DE 0-based bölücüdür:
+ *   ClockPrescaler = N  →  FCLK = kernel_clock / (N + 1)
+ *
+ * Erratum / bilinmesi gerekenler:
+ *   - F4/F7 QUADSPI memory-mapped modda BAZI revizyonlarda prescaler'ın
+ *     çift toplam-bölme değerine denk gelmesi (yani N tek olması) önerilir;
+ *     bu bir hard kural değil, AutoPolling timeout görürsen prescaler'ı
+ *     bir üste (daha düşük frekansa) çek.
+ *   - H7 OCTOSPI DCR2.PRESCALER: 8-bit, FCLK = kernel / (PRESCALER+1).
+ *     RM0433 §23.7.4 — formül ikisinde aynıdır. */
 
-/* QUADSPI prescaler = ClockPrescaler + 1 bölücü */
-hqspi.Init.ClockPrescaler = 4;  /* → 200/5 = 40 MHz */
-
-/* OCTOSPI prescaler doğrudan bölücü */
-hospi.Init.ClockPrescaler = 5;  /* → 200/5 = 40 MHz */
+/* 200 MHz kernel, hedef 40 MHz: bölücü = 5 → ClockPrescaler = 4. */
+hqspi.Init.ClockPrescaler = 4;  /* QUADSPI: 200/(4+1) = 40 MHz */
+hospi.Init.ClockPrescaler = 4;  /* OCTOSPI: 200/(4+1) = 40 MHz, SAME formula */
 ```
 
 > F7/H7'de AutoPolling timeout alıyorsan prescaler'ı bir üste (daha düşük frekansa) çek ve test et.

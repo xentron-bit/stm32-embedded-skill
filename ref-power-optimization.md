@@ -81,11 +81,13 @@ On H7 there are three power domains: D1 (CPU), D2 (AHB/APB peripherals), D3 (aut
 D3 can stay active while D1/D2 sleep — key for low-power sensor acquisition.
 
 ```c
-/* D1 Stop: CPU core sleeps, D2/D3 can keep running */
+/* D1 Stop: CPU core sleeps, D2/D3 can keep running.
+ * H7 HAL does NOT expose HAL_PWREx_EnterSTOP1Mode — that's an L4/G4 name.
+ * On H7 use HAL_PWREx_EnterSTOPMode with a domain selector. */
 void h7_enter_d1_stop(void)
 {
-    HAL_PWREx_EnterSTOP1Mode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFI);
-    /* On H7: CStop (domain CPU stop), not full system stop */
+    HAL_PWREx_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFI,
+                            PWR_D1_DOMAIN);
 }
 
 /* Full system Stop (all domains): deepest H7 stop with RAM retention */
@@ -107,8 +109,13 @@ void h7_d3_autonomous_sensor(void)
 {
     /* Enable BDMA to D3 SRAM4 (only DMA accessible from D3) */
     /* Configure I2C4 (D3 peripheral) + BDMA channel          */
-    /* Set D3 domain to autonomous mode via RCC */
-    __HAL_RCC_D3AMR_CLK_ENABLE();
+    /* Set D3 autonomous-mode clock enable per peripheral:
+     * There is no __HAL_RCC_D3AMR_CLK_ENABLE() — autonomous-mode bits are
+     * per-peripheral in RCC_D3AMR. Use the specific macro for the peripheral
+     * you want to keep running, e.g. for I2C4 + BDMA + LPUART1: */
+    __HAL_RCC_BDMA_CLKAM_ENABLE();
+    __HAL_RCC_I2C4_CLKAM_ENABLE();
+    __HAL_RCC_LPUART1_CLKAM_ENABLE();
     /* Then enter D1 stop — D3 keeps sampling */
     HAL_PWREx_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI,
                              PWR_D1_DOMAIN);
@@ -164,17 +171,36 @@ void set_vos_low_power(void)
     /* Then reconfigure PLL to lower target; AHB prescaler can reduce HCLK */
 }
 
-/* STM32H7: VOS0 for 480 MHz, VOS1 for 400 MHz, VOS2 for 300 MHz */
+/* STM32H7 VOS-to-frequency mapping — FAMILY-DEPENDENT, not universal.
+ *
+ *   H743 / H753 / H730 / H750  (RM0433 §6.6.2):
+ *     VOS1 = 400 MHz, VOS2 = 300 MHz, VOS3 = 200 MHz
+ *     VOS0 = 480 MHz, but ONLY on rev V silicon AND only after enabling
+ *            SYSCFG->PWRCR.ODEN (overdrive) with the sequence in AN5312.
+ *            Just writing VOS0 without enabling ODEN keeps the chip at 400 MHz.
+ *
+ *   H7A3 / H7B0 / H7B3  (RM0455 §6.8.6) — DIFFERENT encoding:
+ *     VOS0 = 280 MHz, VOS1 = 225 MHz, VOS2 = 160 MHz, VOS3 = 88 MHz
+ *
+ * The function below targets H743-class parts. Adapt thresholds per family. */
 void h7_set_vos_for_freq(uint32_t target_mhz)
 {
     uint32_t vos;
-    if      (target_mhz > 400) vos = PWR_REGULATOR_VOLTAGE_SCALE0; /* 480 MHz */
+    if      (target_mhz > 400) vos = PWR_REGULATOR_VOLTAGE_SCALE0; /* 480 MHz, needs ODEN */
     else if (target_mhz > 300) vos = PWR_REGULATOR_VOLTAGE_SCALE1; /* 400 MHz */
     else if (target_mhz > 200) vos = PWR_REGULATOR_VOLTAGE_SCALE2; /* 300 MHz */
     else                        vos = PWR_REGULATOR_VOLTAGE_SCALE3; /* 200 MHz */
 
     __HAL_PWR_VOLTAGESCALING_CONFIG(vos);
     while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {} /* MANDATORY wait */
+
+    /* To actually reach 480 MHz on rev V H743: enable overdrive.
+     * Skipped above for non-VOS0; on rev Y silicon ODEN write has no effect. */
+    if (vos == PWR_REGULATOR_VOLTAGE_SCALE0) {
+        __HAL_RCC_SYSCFG_CLK_ENABLE();
+        SYSCFG->PWRCR |= SYSCFG_PWRCR_ODEN;
+        while (!__HAL_PWR_GET_FLAG(PWR_FLAG_ACTVOSRDY)) {}
+    }
 }
 ```
 

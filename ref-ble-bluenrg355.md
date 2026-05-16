@@ -245,9 +245,13 @@ ret = aci_le_set_extended_advertising_parameters(
     NULL,                        /* Peer_Address */
     0x00U,                       /* Adv_Filter_Policy */
     0x00U,                       /* Adv_TX_Power: host-selected */
-    LE_2M_PHY,                   /* Primary_Adv_PHY: 1M (BT spec: primary=1M) */
+    LE_1M_PHY,                   /* Primary_Adv_PHY: MUST be 1M or Coded.
+                                  * BT Core 5.4 Vol 6 Part B §2.3.1 forbids
+                                  * LE_2M_PHY on primary channels; controllers
+                                  * return HCI error 0x12 (Invalid HCI Params)
+                                  * if 2M is requested here. */
     0x00U,                       /* Secondary_Max_Skip */
-    LE_2M_PHY,                   /* Secondary_Adv_PHY: 2M */
+    LE_2M_PHY,                   /* Secondary_Adv_PHY: 2M is allowed here */
     0x00U,                       /* Adv_SID */
     0x00U                        /* Scan_Req_Notification_Enable */
 );
