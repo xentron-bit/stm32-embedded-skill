@@ -92,13 +92,24 @@ static uint16_t rx_len = 0;
 static uint32_t last_rx_tick = 0;
 static bool     frame_complete = false;
 
-/* Called from UART RX ISR */
+/* Called from UART RX ISR.
+ *
+ * NOTE: HAL_GetTick() resolution is 1 ms. Modbus over Serial V1.02 §2.5.1.1:
+ *   - baud ≤ 19200: gap = 3.5 char time (~2 ms @ 19200, ~4 ms @ 9600)
+ *   - baud  > 19200: gap is FIXED at 1.750 ms
+ * 1 ms tick is too coarse above 19200 baud. For those use either:
+ *   (a) hardware idle-line detect (USART IDLE flag)  -- recommended
+ *   (b) a basic timer running at 10 kHz for sub-ms resolution
+ *   (c) USART RTOR (Receiver Timeout Register, F0/F4/F7/H7/L4) — built-in
+ *       silent-interval interrupt; the cleanest STM32-specific solution.
+ * The example below is correct only for ≤ 19200 baud.
+ */
 void modbus_uart_rx_byte(uint8_t byte)
 {
     uint32_t now = HAL_GetTick();
 
     /* 3.5 char silence detected — frame boundary */
-    /* For 9600 baud: 3.5 * (1/9600) * 11bits ≈ 4ms; use 5ms */
+    /* For 9600 baud: 3.5 * (1/9600) * 11 bits ≈ 4 ms; use 5 ms with HAL_GetTick. */
     if ((now - last_rx_tick) > MODBUS_TIMEOUT_MS && rx_len > 0) {
         frame_complete = true; /* previous frame done, will be processed in main */
         rx_len = 0;

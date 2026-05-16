@@ -116,12 +116,12 @@ Yanıt:  71 03 02 02 AB CD   → sonuç verisi
 
 ### RequestDownload + TransferData (Flash Programlama)
 ```
-İstek:  34 00 44 08 00 00 00 FF FF FF
-        34       → RequestDownload
-        00       → dataFormatIdentifier (sıkıştırma yok)
-        44       → addressAndLengthFormatID (4 byte addr, 4 byte length)
-        08000000 → başlangıç adresi (flash 0x08000000)
-        0000FFFF → blok boyutu
+İstek:  34 00 44 08 00 00 00 00 00 FF FF     (11 byte: SID+fmt+addrLen+4B addr+4B size)
+        34          → RequestDownload
+        00          → dataFormatIdentifier (sıkıştırma yok)
+        44          → addressAndLengthFormatID (4-byte addr, 4-byte size)
+        08 00 00 00 → başlangıç adresi (flash 0x08000000)
+        00 00 FF FF → blok boyutu (0x0000FFFF = 65535 byte)
 Yanıt:  74 20 01 00          → OK; maxBlockSize=0x0100 (256 byte blok)
 
 İstek:  36 01 [256 byte data]   → TransferData, blockSeqCounter=1
@@ -638,11 +638,18 @@ static uint8_t  block_seq;
 
 void uds_request_download(const uint8_t *data, uint16_t len)
 {
-    /* data: 34 00 44 [4B addr] [4B len] */
-    uint32_t addr = ((uint32_t)data[4] << 24) | ((uint32_t)data[5] << 16)
-                  | ((uint32_t)data[6] <<  8) |  data[7];
-    uint32_t size = ((uint32_t)data[8] << 24) | ((uint32_t)data[9] << 16)
-                  | ((uint32_t)data[10] << 8) |  data[11];
+    /* ISO 14229-1 §11.5 RequestDownload (with M=N=4 bytes):
+     *   data[0] = 0x34   (SID)
+     *   data[1] = dataFormatIdentifier
+     *   data[2] = addressAndLengthFormatIdentifier (0x44 = 4-byte addr + 4-byte size)
+     *   data[3..6]  = memoryAddress  (MSB first)
+     *   data[7..10] = memorySize     (MSB first)
+     * Total = 11 bytes. */
+    if (len < 11U) { uds_send_nrc(0x34, 0x13); return; }  /* incorrectMessageLength */
+    uint32_t addr = ((uint32_t)data[3] << 24) | ((uint32_t)data[4] << 16)
+                  | ((uint32_t)data[5] <<  8) |  data[6];
+    uint32_t size = ((uint32_t)data[7] << 24) | ((uint32_t)data[8] << 16)
+                  | ((uint32_t)data[9] <<  8) |  data[10];
 
     /* Bank 2 aralığı kontrolü */
     if (addr < 0x08100000UL || (addr + size) > 0x08200000UL) {

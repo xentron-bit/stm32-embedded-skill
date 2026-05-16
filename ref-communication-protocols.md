@@ -624,11 +624,20 @@ void fdcan_configure(FDCAN_HandleTypeDef *hfdcan)
 HAL_StatusTypeDef fdcan_transmit(FDCAN_HandleTypeDef *hfdcan,
                                    uint32_t id, const uint8_t *data, uint8_t dlc)
 {
+    /* CAN-FD DLC encoding is NON-LINEAR for DLC > 8 (9=12B, 10=16B, 11=20B,
+     * 12=24B, 13=32B, 14=48B, 15=64B). The HAL macros FDCAN_DLC_BYTES_<N>
+     * encode this correctly; do NOT compute as (dlc << 16). */
+    static const uint32_t dlc_to_field[16] = {
+        FDCAN_DLC_BYTES_0,  FDCAN_DLC_BYTES_1,  FDCAN_DLC_BYTES_2,  FDCAN_DLC_BYTES_3,
+        FDCAN_DLC_BYTES_4,  FDCAN_DLC_BYTES_5,  FDCAN_DLC_BYTES_6,  FDCAN_DLC_BYTES_7,
+        FDCAN_DLC_BYTES_8,  FDCAN_DLC_BYTES_12, FDCAN_DLC_BYTES_16, FDCAN_DLC_BYTES_20,
+        FDCAN_DLC_BYTES_24, FDCAN_DLC_BYTES_32, FDCAN_DLC_BYTES_48, FDCAN_DLC_BYTES_64,
+    };
     FDCAN_TxHeaderTypeDef hdr = {
         .Identifier          = id,
         .IdType              = FDCAN_STANDARD_ID,
         .TxFrameType         = FDCAN_DATA_FRAME,
-        .DataLength          = (uint32_t)dlc << 16U,  /* FDCAN_DLC_BYTES_N */
+        .DataLength          = dlc_to_field[dlc & 0x0FU],
         .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
         .BitRateSwitch       = FDCAN_BRS_OFF,          /* FDCAN_BRS_ON for FD */
         .FDFormat            = FDCAN_CLASSIC_CAN,      /* FDCAN_FD_CAN for FD */
@@ -637,7 +646,9 @@ HAL_StatusTypeDef fdcan_transmit(FDCAN_HandleTypeDef *hfdcan,
     };
     /* Check TX FIFO space */
     if (HAL_FDCAN_GetTxFifoFreeLevel(hfdcan) == 0) return HAL_BUSY;
-    return HAL_FDCAN_AddMessageToTxFifo(hfdcan, &hdr, data);
+    /* Correct HAL name is *_AddMessageToTxFifoQ — *_AddMessageToTxFifo does
+     * not exist (link error). */
+    return HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &hdr, data);
 }
 ```
 

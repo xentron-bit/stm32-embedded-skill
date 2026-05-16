@@ -37,7 +37,7 @@ Link         │ Ethernet IEEE 802.3 (STM32 ETH + PHY)
 **Portlar:**
 - UDP 13400: Araç duyurusu, keşif
 - TCP 13400: Tanı oturumu (routing activation + diagnostic message)
-- Multicast: 239.255.0.1 (IPv4) — vehicle announcement hedefi
+- Multicast: 224.0.0.51 (IPv4 "AllDoIPNodes", per ISO 13400-2 §7.1.1) — vehicle announcement
 
 ---
 
@@ -339,7 +339,7 @@ static uint8_t eth_tx_buf[ETH_TX_DESC_CNT][ETH_MAX_PACKET_SIZE];
 /* DoIP gateway task */
 #define DOIP_UDP_PORT   13400
 #define DOIP_TCP_PORT   13400
-#define DOIP_MULTICAST  "239.255.0.1"
+#define DOIP_MULTICAST  "224.0.0.51"   /* ISO 13400-2 §7.1.1 "AllDoIPNodes" */
 
 static void doip_gateway_task(void *arg)
 {
@@ -406,8 +406,17 @@ static void doip_send_vehicle_announcement(int sock)
     memcpy(resp->vin, "1HGBH41JXMN109186", 17);  /* Gerçek projede OTP'den oku */
     resp->logical_address  = __builtin_bswap16(0x0E80);  /* Bu gateway'in adresi */
     memset(resp->eid, 0, 6);
-    /* EID = MAC adresi */
-    HAL_ETH_GetMACAddr(&heth, resp->eid);
+    /* EID = MAC adresi. HAL_ETH_GetMACAddr() bir ST HAL fonksiyonu DEĞİL.
+     * MAC adresi heth.Init.MACAddr alanından (HAL_ETH_Init öncesi set edilir)
+     * veya doğrudan MAC kayıt yazmaçlarından okunur. */
+    memcpy(resp->eid, heth.Init.MACAddr, 6);
+    /* Alternatif: registerlardan oku (STM32H7 RM0433 §62.5)
+     *   uint32_t hi = ETH->MACA0HR;
+     *   uint32_t lo = ETH->MACA0LR;
+     *   resp->eid[0] = lo & 0xFF;        resp->eid[1] = (lo >> 8)  & 0xFF;
+     *   resp->eid[2] = (lo >> 16) & 0xFF; resp->eid[3] = (lo >> 24) & 0xFF;
+     *   resp->eid[4] = hi & 0xFF;        resp->eid[5] = (hi >> 8)  & 0xFF;
+     */
     memset(resp->gid, 0xFF, 6);
     resp->further_action   = DOIP_FURTHER_ACTION_NONE;
 
@@ -531,22 +540,25 @@ typedef struct __attribute__((packed)) {
 
 ```
 Standart aralıklar (ISO 13400-2 Tablo 3):
-  0x0000          : Ayrılmış
-  0x0001–0x0DFF   : Harici test cihazları (PC tester, EOL tester)
-  0x0E00–0x0EFF   : DoIP entity'leri (gateway)
-  0x0F00–0x0FFF   : Ayrılmış
-  0x1000–0x7FFF   : ECU lokal adresleri
-  0x8000–0xE3FF   : Ayrılmış (gelecek)
-  0xE400–0xE3FF   : OEM spesifik
-  0xF000–0xFEFF   : Fonksiyonel adresleme (OBD: 0xE400)
-  0xFF00–0xFFFF   : Ayrılmış (broadcast)
+  Per ISO 13400-2 Table 13 (Logical Address Assignment):
+  0x0000          : Reserved
+  0x0001–0x0DFF   : VM-specific tester/external addresses
+  0x0E00–0x0FFF   : DoIP entity / gateway addresses
+  0x1000–0x7FFF   : VM-specific (ECU node addresses)
+  0x8000–0xCFFF   : Reserved by ISO
+  0xD000–0xDFFF   : Reserved for SAE
+  0xE000–0xE3FF   : Functional addresses (legislated)  e.g. 0xE000 ISO OBD
+                                                            0xE400 SAE WWH-OBD
+  0xE400–0xEFFF   : Functional addresses (OEM-defined)
+  0xF000–0xFFFF   : Reserved by ISO
 
 Örnek:
   DoIP Gateway   → 0x0E80
-  EOL Tester     → 0x0001
+  EOL Tester     → 0x0E00
   Engine ECU     → 0x1000
   Gearbox ECU    → 0x1001
-  OBD broadcast  → 0xE400 (fonksiyonel)
+  ISO OBD funct  → 0xE000 (ISO 27145 legislated OBD)
+  WWH-OBD funct  → 0xE400
 ```
 
 ---
@@ -564,7 +576,7 @@ Standart aralıklar (ISO 13400-2 Tablo 3):
 | ISO-TP timeout çok kısa | Test takımı yanıt alamıyor | `A_Processing_Time` = 2000ms (P2*_server = 5s bile olabilir) |
 | Multicast join yapılmıyor | Vehicle announcement çalışmıyor | `IP_ADD_MEMBERSHIP` setsockopt zorunlu |
 | SA çakışması kontrolü yok | İki test cihazı aynı SA: routing karışır | Active bağlantılarda SA tablosu tut |
-| EID (MAC) sabit hardcode | Üretim firmwaresinde ağ çakışması | `HAL_ETH_GetMACAddr` ile dinamik oku |
+| EID (MAC) sabit hardcode | Üretim firmwaresinde ağ çakışması | `heth.Init.MACAddr`'dan veya `ETH->MACA0HR/LR` registerlarından oku |
 
 ---
 

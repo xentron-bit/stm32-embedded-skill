@@ -352,23 +352,31 @@ Her protokol DTC'yi farklı formatta sunar:
 uint8_t dem_encode_j1939_dm1(dem_ctx_t *dem, uint8_t *buf, uint16_t buflen)
 {
     uint8_t pos = 0;
-    /* Byte 0: Lamp status */
-    buf[pos++] = (dem->mil_on ? 0x40 : 0x00)   /* MIL: bit 6-5 = 01 */
-               | (dem->rsl_on ? 0x04 : 0x00)   /* RSL: bit 3-2 = 01 */
-               | (dem->awl_on ? 0x10 : 0x00);  /* AWL: bit 5-4 = 01 */
+    /* J1939-73 §5.7.1 byte 0 (Lamp status):
+     *   bits[7:6] = MIL (Malfunction Indicator)
+     *   bits[5:4] = RSL (Red Stop Lamp)
+     *   bits[3:2] = AWL (Amber Warning Lamp)
+     *   bits[1:0] = PIL (Protect Lamp)
+     * Each 2-bit field: 00=off, 01=on, 10=reserved, 11=N/A. "On" code = 0b01. */
+    buf[pos++] = (dem->mil_on ? 0x40 : 0x00)   /* MIL on  = bits[7:6]=01 = 0x40 */
+               | (dem->rsl_on ? 0x10 : 0x00)   /* RSL on  = bits[5:4]=01 = 0x10 */
+               | (dem->awl_on ? 0x04 : 0x00)   /* AWL on  = bits[3:2]=01 = 0x04 */
+               | (dem->pil_on ? 0x01 : 0x00);  /* PIL on  = bits[1:0]=01 = 0x01 */
     buf[pos++] = 0xFF;  /* flash: reserved */
 
     for (int i = 0; i < dem->dtc_count && pos + 4 <= buflen; i++) {
         if (!dem->dtc[i].active) continue;
         dem_dtc_t *d = &dem->dtc[i];
-        /* SPN[18:11] */
-        buf[pos++] = (d->spn >> 11) & 0xFF;
-        /* SPN[10:3] */
-        buf[pos++] = (d->spn >> 3) & 0xFF;
-        /* SPN[2:0] | FMI[4:0] */
-        buf[pos++] = ((d->spn & 0x07) << 5) | (d->fmi & 0x1F);
-        /* OC */
-        buf[pos++] = d->occ_count & 0x7F;
+        /* J1939-73 SPN packing, CM=0 (modern): byte0=SPN[7:0], byte1=SPN[15:8],
+         * byte2[7:5]=SPN[18:16] / byte2[4:0]=FMI. The legacy/WWH big-endian
+         * packing below is RESERVED for CM=1 — do not use for J1939 DM1. */
+        buf[pos++] = (uint8_t)( d->spn        & 0xFFU);        /* SPN[7:0]  */
+        buf[pos++] = (uint8_t)((d->spn >> 8)  & 0xFFU);        /* SPN[15:8] */
+        /* byte2: SPN[18:16] in bits[7:5], FMI in bits[4:0] */
+        buf[pos++] = (uint8_t)(((d->spn >> 16) & 0x07U) << 5)
+                   | (uint8_t)(d->fmi & 0x1FU);
+        /* byte3: CM(bit7)=0 | OC(bits[6:0]) */
+        buf[pos++] = d->occ_count & 0x7FU;
     }
 
     return pos;
