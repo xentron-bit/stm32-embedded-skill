@@ -5,6 +5,32 @@ description: Use when developing, reviewing, or debugging firmware for STM32 mic
 
 # STM32 Embedded Development Skill
 
+## 🌐 GitHub-First Knowledge Strategy (READ THIS FIRST OF ALL)
+
+This skill does **not** memorize HAL/CMSIS API. Memorization causes drift
+(wrong macro names, wrong signatures, wrong field order). Instead:
+
+| Knowledge layer | Where to fetch from | Don't memorize, don't trust ref-md |
+|-----------------|---------------------|------------------------------------|
+| **L1 — HAL / peripheral / startup / linker** | `gh search code '<symbol>' --owner=STMicroelectronics --extension=c` | ✓ Always verify HAL names via gh |
+| **L2 — RTOS (RTX5 + FreeRTOS)** | `gh search code '<symbol>' --owner=ARM-software` (RTX5) / `--owner=FreeRTOS` / `--owner=STMicroelectronics` (ST's port) | ✓ Always verify RTOS API |
+| **L3 — Protocols (J1939/UDS/OBD/DoIP/Modbus)** | Spec PDFs (ISO/SAE, paid). Ref-md is the trusted in-repo source. | Only place ref-md is authoritative |
+| **L4 — Design / strategy / errata** | ref-md only. Task ladders, ISR patterns, stack sizing, errata workarounds, decision trees. | Only place ref-md is authoritative |
+
+**Workflow for any HAL/RTOS code you produce:**
+```
+1. Need an API name? → grep ref-st-github-map.md §9 for known-wrong names
+2. Not in §9? → gh search code '<name>' --owner=STMicroelectronics --extension=c
+3. ≥1 hit → use it (and cite the path in your code comment)
+4. 0 hits → the name is wrong; ask user for family or search variants
+5. Only fall back to ref-md snippets when offline or for L3/L4 content
+```
+
+See [ref-st-github-map.md](ref-st-github-map.md) for the full repo catalog
+and `gh` command recipes.
+
+---
+
 ## ⚡ Quick Start — Operating Modes (READ FIRST)
 
 When this skill is invoked, **identify the mode first**, then follow the matching procedure.

@@ -21,7 +21,10 @@
       "WebFetch(domain:developer.arm.com)",
       "WebFetch(domain:www.keil.com)",
       "WebFetch(domain:www.st.com)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(chmod +x /Users/akeles/stm32skill/bin/refresh-st-repo-cache.sh)",
+      "Bash(git -C /Users/akeles/stm32skill status --short)",
+      "Bash(git -C /Users/akeles/stm32skill add -A)"
     ]
   }
 }
