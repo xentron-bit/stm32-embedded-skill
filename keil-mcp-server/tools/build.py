@@ -45,18 +45,25 @@ def get_elf_path(uvprojx: str, target: str | None = None) -> str:
 
 # ── Build log parsing ────────────────────────────────────────────────────────
 
-# Keil AC5/AC6 error/warning format:
+# ANSI escape stripper — newer armclang emits coloured output even when
+# redirected via UV4 -o log, breaking line-pattern matching.
+_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+# Keil AC5/AC6 compiler error/warning format:
 #   path\file.c(42): error: #123: message
 #   path\file.c(42): warning: #456: message
+# Capture the error/warning code so callers can classify (was previously dropped).
 _LOG_PATTERN = re.compile(
-    r"^(.+?)\((\d+)\):\s*(error|warning)\s*(?:#\d+\s*)?:\s*(.+)$",
+    r"^(.+?)\((\d+)\):\s*(error|warning)\s*(?:#(\d+)\s*)?:\s*(.+)$",
     re.IGNORECASE,
 )
 
-# Linker error format (no line number):
+# armlink error format (no source line number):
 #   Error: L6218E: Undefined symbol foo (referred from bar.o)
+#   Warning: L6915W: Library member ... not loaded
+# armlink codes are L\d{4}[EWI]; allow generic [A-Z]\d{4}[A-Z] only.
 _LINKER_PATTERN = re.compile(
-    r"^(Error|Warning):\s+([A-Z]\d+[A-Z]?):\s+(.+)$",
+    r"^(Error|Warning):\s+([A-Z]\d{3,5}[A-Z]):\s+(.+)$",
     re.IGNORECASE,
 )
 
@@ -70,16 +77,20 @@ def parse_build_log(log_path: str) -> list[dict]:
         return errors
 
     for line in text.splitlines():
-        m = _LOG_PATTERN.match(line.strip())
+        line = _ANSI_RE.sub("", line.strip())
+        m = _LOG_PATTERN.match(line)
         if m:
-            errors.append({
+            entry = {
                 "file":    m.group(1).strip(),
                 "line":    int(m.group(2)),
                 "type":    m.group(3).lower(),
-                "message": m.group(4).strip(),
-            })
+                "message": m.group(5).strip(),
+            }
+            if m.group(4):
+                entry["code"] = f"#{m.group(4)}"
+            errors.append(entry)
             continue
-        m = _LINKER_PATTERN.match(line.strip())
+        m = _LINKER_PATTERN.match(line)
         if m:
             errors.append({
                 "file":    "linker",

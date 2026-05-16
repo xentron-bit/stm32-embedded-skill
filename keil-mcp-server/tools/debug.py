@@ -365,7 +365,13 @@ async def peripheral_read(
     """
     svd = state.svd_data
     if not svd:
-        return _text("SVD not loaded — call debug_connect with mcu_name, or call svd_load separately")
+        hint = ""
+        if state.elf_path:
+            hint = f"\nHint: derive MCU from ELF / .ioc, then call svd_load(mcu_name='STM32xxxx')."
+        return _text(
+            "SVD not loaded — call debug_connect with mcu_name, "
+            "or call svd_load separately." + hint
+        )
 
     p_name = peripheral.upper()
     periph = svd.get(p_name)

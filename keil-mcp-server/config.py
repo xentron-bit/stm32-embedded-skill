@@ -190,7 +190,15 @@ def list_connected_probes(cubeprog_path: str | None) -> list[dict]:
             **(_no_window() if sys.platform == "win32" else {})
         )
         probes = _parse_probe_list(result.stdout)
-        return probes if probes else [{"info": "No ST-LINK probes detected"}]
+        if probes:
+            return probes
+        # No probes parsed — surface stderr so the user sees the real reason
+        # (driver missing, USB permissions, firmware mismatch).
+        stderr = (result.stderr or "").strip()
+        info: dict = {"info": "No ST-LINK probes detected"}
+        if stderr:
+            info["stderr"] = stderr[:500]
+        return [info]
     except subprocess.TimeoutExpired:
         return [{"error": "Probe listing timed out"}]
     except Exception as e:
