@@ -25,7 +25,7 @@ A comprehensive Claude Code skill for STM32 embedded systems development coverin
 | **Safety & Hardening** | |
 | [ref-compiler-hardening.md](ref-compiler-hardening.md) | Optimizer bug prevention: volatile, barriers, DMA cache size formula, ISR reorder, LTO |
 | [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault register dump, BusFault/MemManage decode, reset cause detection, noinit persist |
-| [ref-mpu-trustzone.md](ref-mpu-trustzone.md) | MPU stack guard, null-pointer trap, non-cacheable DMA region, peripheral access control |
+| [ref-trustzone.md](ref-trustzone.md) | MPU stack guard, null-pointer trap, non-cacheable DMA region, TrustZone-M SAU/GTZC |
 | [ref-trustzone.md](ref-trustzone.md) | TrustZone-M (STM32L5/U5/H5): SAU, GTZC, NSC, CMSE, secure boot chain |
 | **System** | |
 | [ref-boot-clock.md](ref-boot-clock.md) | Clock tree, PLL config, HSE/HSI, bootloader entry, option bytes |
@@ -47,8 +47,9 @@ A comprehensive Claude Code skill for STM32 embedded systems development coverin
 
 ## Installation
 
+### Skill content (reference docs)
 ```bash
-# Copy to Claude skills directory
+# Copy skill files to Claude skills directory
 cp -r . ~/.claude/skills/stm32-embedded-dev
 ```
 
@@ -57,15 +58,36 @@ Then use the skill in Claude Code:
 /stm32-embedded-dev
 ```
 
-## Code Analysis Tool: Graphify
-
-Proje incelemesi başlamadan önce [Graphify](https://github.com/safishamsi/graphify) ile knowledge graph oluştur. C/C++ + header bağımlılıkları + Keil projelerini destekler; büyük projelerde token kullanımını 70x azaltır.
+### MCP server (build/flash/debug tools — optional)
+The `keil-mcp-server/` subdirectory contains an MCP server exposing 29 tools
+to Claude (UV4 build/flash, ST-Link GDB debug, IOC/CubeMX, SVD decode, JTAG).
 
 ```bash
-pip install graphify-code
-graphify install   # CLAUDE.md + PreToolUse hook yazar
-graphify run .     # graphify-out/GRAPH_REPORT.md üretir
+# From repo root
+cd keil-mcp-server
+python install.py            # writes MCP entry to ~/.claude.json (atomic, .bak backed)
+# Windows: install.bat or install.ps1 (both call install.py)
 ```
+
+## Code Analysis Tool: Graphify
+
+For projects ≥3 C files, the skill auto-runs [Graphify](https://github.com/safishamsi/graphify)
+to build a call-graph and dependency map (token usage drops ~70× on large projects).
+
+```bash
+# Correct package name is 'graphifyy' (double y), not 'graphify-code'.
+pip install graphifyy           # Linux / general
+# macOS (use Homebrew Python — system python3 will not work):
+brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
+# Windows:
+py -m pip install graphifyy
+
+graphify . --no-viz             # produces graphify-out/GRAPH_REPORT.md
+graphify query "DMA buffer who uses?" --graph graphify-out/graph.json
+```
+
+The skill will skip graphify silently if it's unavailable — no manual hook
+setup needed.
 
 ## Sources
 

@@ -1,9 +1,70 @@
 ---
 name: stm32-embedded-dev
-description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F4/F7/H7/H5/L0/L4/U5/G0/G4/WB) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX). Trigger when implementing peripheral drivers (I2C/SPI/UART/CAN/DMA), designing RTOS task architecture, optimizing flash/RAM usage, setting up XIP debug via SWD/JTAG, detecting compiler optimization pitfalls, or implementing industrial-grade embedded software for automotive, factory automation, or harsh-environment applications. Also trigger when working with STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts, or startup code.
+description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F2/F3/F4/F7/G0/G4/H5/H7/H7RS/L0/L1/L4/L5/U0/U5/WB/WBA/N6) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX, Zephyr). Trigger for peripheral drivers (I2C/SPI/UART/CAN/FDCAN/DMA/ADC/Timer/HRTIM/QSPI/OCTOSPI/FMC/SDMMC), RTOS task design, flash/RAM optimization, XIP/SWD/JTAG debug, compiler pitfall detection (volatile/LTO/aliasing/cache), or industrial firmware for automotive, factory automation, harsh environments. Also: STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts (.ld + scatter), startup code, fault handlers, OTA/IAP/dual-bank bootloaders, secure boot/RDP/PCROP/OTFDEC, TrustZone-M (SAU/GTZC/MPCBB/CMSE), power modes/sleep/LPTIM/RTC wakeup, automotive diagnostics (UDS ISO 14229, J1939, OBD-II SAE J1979, WWH-OBD ISO 27145, DoIP ISO 13400, Modbus RTU), BLE (BlueNRG), USB device/host (CDC-ACM/HID/MSC + TinyUSB), Ethernet/LwIP, errata cross-check.
 ---
 
 # STM32 Embedded Development Skill
+
+## ⚡ Quick Start — Operating Modes (READ FIRST)
+
+When this skill is invoked, **identify the mode first**, then follow the matching procedure.
+
+| Mode | Trigger | Procedure | Output shape | Max length |
+|------|---------|-----------|--------------|------------|
+| **A. Quick Q&A** | Single-question (≤2 lines), no code attached | Answer directly. No graphify, no checklist. | Plain answer | ≤5 lines |
+| **B. Review existing code** | User pastes/points to code | (1) Detect MCU + family (2) Errata cross-check (3) Graphify if ≥3 `.c` files (4) Use Finding Template | Findings list | ≤8 findings inline; use template for ≥1 file |
+| **C. Implement new feature** | "Write a driver for...", "Add OTA..." | (1) Context interview if ambiguous (2) 5-phase summary (3) Code with errata notes inline | Code + 5-phase summary | ≤30 lines summary + code |
+| **D. Debug** | "Why does X not work?", "HardFault at ..." | (1) Ask for fault dump / debug info (2) Decode CFSR/BFAR (3) Walk root cause | Q&A + decoded fields | Until root cause found |
+
+### Mandatory Finding Template (Mode B + D)
+
+Every issue you flag MUST use this exact shape — never prose paragraphs:
+
+```
+[SEVERITY] file.c:LINE — CATEGORY
+  what:  one sentence describing the bug
+  why:   one sentence explaining failure mode (what breaks at runtime / on which silicon)
+  fix:   one sentence — concrete change, with RM/spec citation if applicable
+  errata: [ES0480 §2.3.1] if applicable, else omit
+```
+
+Severity codes: `CRITICAL` (data loss / silent corruption / compile fail), `HIGH` (functional bug), `MEDIUM` (maintainability / latent), `LOW` (style).
+
+### Decision Tree on Invocation
+
+```
+User request
+   │
+   ▼
+1. Mode = A (quick Q)?         ──► Answer in ≤5 lines. STOP.
+   │
+   ▼
+2. Mode = B (review)?
+     │
+     ▼
+   2a. Detect MCU + silicon rev (ask if unknown)
+   2b. Open ref-stm32-errata.md, list relevant errata IDs (≤3 lines)
+   2c. Scope ≥3 .c files?  YES → bash: [ -f graphify-out/GRAPH_REPORT.md ] || Skill(graphify, <dir>)
+                            NO  → skip graphify
+   2d. Apply Code Review Checklist filtered by triage rules (see §Code Review)
+   2e. Emit findings via template (above)
+   │
+   ▼
+3. Mode = C (implement)?
+     │
+     ▼
+   3a. If ambiguous: 1-2 Context Interview questions (see §Context Interview)
+   3b. Otherwise: code first, 5-phase summary after
+   │
+   ▼
+4. Mode = D (debug)?  ──► Walk fault dump / CFSR. Ask for missing data.
+```
+
+### Response language
+
+Respond in the user's language. Reference files may mix Turkish/English — translate quoted terms inline if needed. Never code-switch within a single sentence.
+
+---
 
 ## Overview
 
@@ -688,64 +749,39 @@ Before declaring firmware "done for production":
 
 ---
 
----
-
 ## Pre-Review: Code Map + Context Interview
 
 **Do this before opening the Code Review Checklist.** Skipping this step produces false positives — flagging intentional embedded optimizations as bugs.
 
-### Step 1 — Generate the Code Map (AUTOMATIC — do not skip)
+### Step 1 — Generate the Code Map (when scope ≥3 .c files)
 
-**Bu adım zorunludur ve otomatik çalışır.** Herhangi bir `.c` dosyasına bakmadan önce graph'ı oluştur veya oku.
+**Skip rule:** For single-file snippets or inline code (<200 LOC), DO NOT run graphify — go straight to review.
 
-**CLAUDE: Bu skill invoke edildiğinde aşağıdaki adımları HEMEN uygula:**
+**Trigger conditions:** ≥3 `.c` files in scope, OR user asks for call-graph / dependency analysis.
+
+**Procedure:**
 
 ```
-0. Graphify kurulum + versiyon kontrolü (her oturumda)
+1. Check: [ -f graphify-out/GRAPH_REPORT.md ]
+   - EXISTS → Read it, jump to Step 2
+   - MISSING → run graphify:
+       Bash: graphify . --no-viz   (run from project root)
+     If `graphify` command is missing, install:
+       macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
+       Linux  : pip3 install --user graphifyy
+       Windows: py -m pip install graphifyy
+     If install also fails, SKIP graphify and tell the user — do not block review.
 
-   # 1. graphify binary'sinin bulunup bulunmadığını kontrol et
-   Bash: which graphify && graphify --version 2>/dev/null
-
-   - KURULU DEĞİLSE → Homebrew Python ile yükle (macOS'ta pip3/python3 ≠ graphify'ın Python'u):
-     Bash: pip3 install graphifyy --break-system-packages 2>/dev/null \
-           || /opt/homebrew/bin/pip3 install graphifyy \
-           || brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
-
-   - KURULUYSA → versiyonu kullanıcıya bildir (örn: "graphify 0.7.16 ✓")
-
-   # 2. Doğru Python interpreter'ı bul ve kaydet (KRITIK — macOS'ta system python3 ≠ graphify python)
-   # graphify binary'sinin shebang'ından doğru interpreter'ı oku:
-   Bash: GRAPHIFY_BIN=$(which graphify) && \
-         PYTHON=$(head -1 "$GRAPHIFY_BIN" | tr -d '#!') && \
-         "$PYTHON" -c "import graphify; print('OK')" 2>/dev/null \
-         || PYTHON=$(uv tool run graphifyy python -c "import sys; print(sys.executable)" 2>/dev/null) \
-         || PYTHON="python3"
-   # .graphify_python'u her zaman bu doğru Python ile oluştur:
-   "$PYTHON" -c "import sys; open('graphify-out/.graphify_python','w').write(sys.executable)"
-
-   # HATIRLA: macOS'ta `python3` = Xcode python → graphify import FAIL olur
-   # Doğru Python genellikle /opt/homebrew/opt/python@3.12/bin/python3.12
-
-   - Güncelleme kontrolü (isteğe bağlı):
-     Bash: pip3 install --upgrade graphifyy --break-system-packages 2>&1 | grep -E "Successfully|already"
-
-1. Bash ile kontrol et: [ -f graphify-out/GRAPH_REPORT.md ]
-   - VARSA  → Read("graphify-out/GRAPH_REPORT.md") ile oku, Step 2'ye geç
-   - YOKSA  → graphify'ı çalıştır (aşağıdaki adım)
-
-2. Graph yoksa — Skill tool ile graphify'ı invoke et:
-   Skill(skill="graphify", args="<proje-dizini>")
-   Örnek: Skill(skill="graphify", args="/Users/akeles/Desktop/External flash xip/DE-XENTRON-V3-BL")
-   
-   graphify çalışınca GRAPH_REPORT.md otomatik oluşur.
-   Bitmeden Step 2'ye GEÇME.
-
-3. Graph tamamlandıktan sonra:
-   - Read("graphify-out/GRAPH_REPORT.md") — God Nodes ve Surprising Connections bölümlerini oku
-   - graphify query ile spesifik sorular sor:
-     Bash: graphify query "DMA buffer kim kullanıyor" --graph graphify-out/graph.json
-     Bash: graphify path "OSPI_WriteEnable" "CSP_OSPI_WriteMemory" --graph graphify-out/graph.json
+2. After graphify completes:
+   - Read graphify-out/GRAPH_REPORT.md — God Nodes + Surprising Connections
+   - Targeted queries: graphify query "<question>" --graph graphify-out/graph.json
+   - Path: graphify path "fnA" "fnB" --graph graphify-out/graph.json
 ```
+
+**Vendor filter (CRITICAL for signal-to-noise):** Before reading the graph,
+mentally filter out HAL_*, LL_*, __HAL_*, CMSIS *, FreeRTOS internal, RTX_*
+nodes. Focus on application symbols. The graph is noisy by default; the
+useful signal is in the application's own call chains.
 
 **Çıktılar (`graphify-out/` klasörü):**
 - `GRAPH_REPORT.md` — God nodes, call chains, paylaşılan değişkenler
@@ -1063,23 +1099,65 @@ See [stm32-families.md](stm32-families.md) for:
 
 ## Reference Files
 
+> **Tek kaynak (canonical):** Bu tablo SKILL.md içinde. README.md ve CLAUDE.md
+> sadece bu dosyaya işaret etmeli — referans listesini kopyalamayın.
+
+### Drivers & Protocols
 | File | Contents |
 |------|----------|
 | [stm32-families.md](stm32-families.md) | Family catalog, HAL repos, CMSIS, RTX5 config |
 | [ref-communication-protocols.md](ref-communication-protocols.md) | I2C, SPI DMA, UART ring buffer, FDCAN |
-| [ref-qspi-octospi-highspeed.md](ref-qspi-octospi-highspeed.md) | QSPI/OCTOSPI yüksek hız sorunları: sample shift, DLYB, dummy cycle, GPIO speed, XIP write |
-| [ref-rtos-patterns.md](ref-rtos-patterns.md) | FreeRTOS periodic, ISR→task, mutex, event groups |
-| [ref-power-optimization.md](ref-power-optimization.md) | Sleep/Stop, clock gating, peripheral power-down |
-| [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pool, ring buffer, linker |
-| [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault dump, CFSR decode, reset cause, boot counter |
-| [ref-adc-timer.md](ref-adc-timer.md) | ADC calibration (offset+gain+VREFINT), DMA circular, oversampling, watchdog, PWM, encoder |
-| [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB Host MSC (TinyUSB), FatFS (SDMMC+USB), LittleFS (internal flash), RTOS-safe file I/O |
-| [ref-iap-ota.md](ref-iap-ota.md) | Flash write, CRC verify, dual-bank OTA, bootloader jump |
-| [ref-mpu-trustzone.md](ref-mpu-trustzone.md) | MPU region setup, stack guard, TrustZone SAU, NSC API |
-| [ref-modbus-rtu.md](ref-modbus-rtu.md) | Modbus RTU slave over RS485, CRC16, FC03/04/06/16 |
-| [ref-boot-clock.md](ref-boot-clock.md) | PLL config (F4/H7), flash wait states, CSS, backup domain |
-| [ref-compiler-hardening.md](ref-compiler-hardening.md) | volatile, barriers, DMA cache, LTO, aliasing, struct padding — silent bug prevention |
-| [ref-c-code-style.md](ref-c-code-style.md) | Naming, types, structs, functions, macros, header layout — MaJerle C style guide |
+| [ref-qspi-octospi-highspeed.md](ref-qspi-octospi-highspeed.md) | QSPI/OCTOSPI high-speed: sample shift, DLYB, dummy cycles |
+| [ref-adc-timer.md](ref-adc-timer.md) | ADC calibration, DMA circular, oversampling, PWM, encoder, HRTIM |
+| [ref-modbus-rtu.md](ref-modbus-rtu.md) | Modbus RTU slave/master, CRC16, framing, exception codes |
+| [ref-fdcan-multi.md](ref-fdcan-multi.md) | FDCAN multi-instance, 8Mbps bit timing, filter, bus-off |
+| [ref-external-memory-fmc.md](ref-external-memory-fmc.md) | FMC SDRAM/NOR/SRAM, OCTOSPI PSRAM init + timing |
+
+### USB & Networking
+| File | Contents |
+|------|----------|
+| [ref-usb-device.md](ref-usb-device.md) | USB device stack: CDC-ACM, HID, MSC, descriptors, endpoints |
+| [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB host (TinyUSB MSC) + FatFS/LittleFS, RTOS-safe file I/O |
+| [ref-ethernet-lwip.md](ref-ethernet-lwip.md) | STM32H5/H7 ETH, LwIP raw/netconn/socket, DHCP, TCP patterns |
+| [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) | BlueNRG-355 BLE: PHY, MTU, throughput, security, OTA |
+
+### Automotive / Diagnostic Stack
+| File | Contents |
+|------|----------|
+| [ref-j1939.md](ref-j1939.md) | SAE J1939 AC state machine, CMDT TP, DM1/DM11, FDCAN bit timing |
+| [ref-uds-iso14229.md](ref-uds-iso14229.md) | ISO 14229 UDS: P2/P2*/S3 timing, Security Access, dual-bank OTA |
+| [ref-obd2.md](ref-obd2.md) | OBD-II (SAE J1979): Modes 0x01–0x0A, Permanent DTC, readiness |
+| [ref-wwh-obd.md](ref-wwh-obd.md) | WWH-OBD (ISO 27145): Euro VI, J1939 29-bit IDs, IUMPR |
+| [ref-doip.md](ref-doip.md) | DoIP (ISO 13400): UDP discovery 224.0.0.51, routing activation, TCP |
+| [ref-diagnostic-stack.md](ref-diagnostic-stack.md) | Unified DTC, CAN dispatch, NVM, freeze frame, OBD+J1939+UDS+WWH |
+| [ref-dtc-mapping.md](ref-dtc-mapping.md) | J1939 SPN/FMI ↔ OBD-II P-code ↔ WWH wire format conversion |
+
+### RTOS / Compiler / C
+| File | Contents |
+|------|----------|
+| [ref-rtos-patterns.md](ref-rtos-patterns.md) | FreeRTOS periodic, ISR→task, mutex, event groups, RTX5 patterns |
+| [ref-keil-armclang.md](ref-keil-armclang.md) | Keil MDK / AC6: LTO traps, scatter, RTX5 pitfalls |
+| [ref-compiler-hardening.md](ref-compiler-hardening.md) | volatile, barriers, DMA cache, ISR reorder, LTO |
+| [ref-c-code-style.md](ref-c-code-style.md) | BARR-C:2018 / QuantumLeaps / NASA style — solid index |
+| [ref-arm-asm.md](ref-arm-asm.md) | Cortex-M assembly: AAPCS, intrinsics, DSP/SIMD, Thumb-2, naked ISR |
+
+### Memory / Clock / Boot / Linker
+| File | Contents |
+|------|----------|
+| [ref-memory-optimization.md](ref-memory-optimization.md) | Compiler flags, memory pools, packed structs, ring buffer |
+| [ref-power-optimization.md](ref-power-optimization.md) | Sleep/Stop/Standby, RTC/LPTIM wakeup, VOS, domain power |
+| [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault decode, CFSR/BFAR/MMFAR, reset cause, noinit persist |
+| [ref-boot-clock.md](ref-boot-clock.md) | PLL (F4/H7/H5), flash wait states, CSS, backup domain |
+| [ref-linker-script.md](ref-linker-script.md) | GCC linker (.ld): MEMORY, SECTIONS, .data/.bss/.noinit |
+| [ref-armlink-scatter.md](ref-armlink-scatter.md) | armlink scatter complete syntax: regions, attributes, .ANY |
+| [ref-iap-ota.md](ref-iap-ota.md) | IAP bootloader, jump, dual-bank swap, CRC verify, DFU |
+
+### Safety / Security / Errata
+| File | Contents |
+|------|----------|
+| [ref-stm32-errata.md](ref-stm32-errata.md) | Real-world errata: HAL bugs, GPIO speed, USB, DMA-DTCM, I2C hang |
+| [ref-trustzone.md](ref-trustzone.md) | TrustZone-M (H5/U5/L5): SAU, GTZC, MPCBB, CMSE, MPU stack guard |
+| [ref-secure-boot.md](ref-secure-boot.md) | RDP levels, option bytes, PCROP, ECDSA, PKA, OTFDEC, anti-rollback |
 
 ---
 
