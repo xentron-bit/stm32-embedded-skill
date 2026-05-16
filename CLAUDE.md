@@ -54,14 +54,19 @@ When MCU is detected, **before** opening any `.c` file:
 
    | Family | Errata sheet |
    |--------|--------------|
-   | STM32H730 / H750 / H743 / H753 | ES0480 |
+   | STM32H743 / H753 / H750 | ES0480 |
+   | STM32H723 / H725 / **H730** / H733 / H735 (Value line) | **ES0491** |
    | STM32H7B0 / H7A3 / H7B3 | ES0392 |
    | STM32H5 (H563/H573) | ES0584 |
    | STM32F7 | ES0334 |
    | STM32F4 | ES0182 |
-   | STM32G4 | ES0430 |
+   | STM32G4 (G431/G441/G473/G474/G483/G484/G491/G4A1) | ES0430 |
+   | STM32G0 | ES0418 |
    | STM32L4 | ES0335 |
+   | STM32L4+ (L4R/L4S) | ES0393 |
    | STM32U5 | ES0499 |
+   | STM32WB | ES0394 |
+   | STM32WL | ES0500 |
 
 3. Cross-check [ref-stm32-errata.md](ref-stm32-errata.md) for known issues
 4. If a critical erratum applies, tag the finding: `errata: [ES0480 §2.x.y]`

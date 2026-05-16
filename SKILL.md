@@ -121,6 +121,102 @@ divergences from authoritative patterns — those are bug candidates.
 "skip-some-phases" mode. The phases are minimum-viable for a trustworthy
 bug-hunt output. Phases are tested step-by-step but never dropped.
 
+### 🔒 Hard Gates — Mandatory Disk-Verified Artifacts
+
+Each phase produces a file on disk. The next phase MUST verify it exists
+via `Bash` before starting. If verification fails, the skill ABORTS with
+a clear message — NEVER falls back to memory-based review.
+
+| After phase | Artifact (disk) | Verify command | On miss |
+|-------------|-----------------|----------------|---------|
+| Faz 3 | `.claude-cache/refs/**/*.c` exists | `find .claude-cache/refs -name '*.c' \| head -1 \| grep -q .` | ABORT |
+| Faz 3 | `.claude-cache/refs/<repo>/.pinned-sha` | `[ -f .claude-cache/refs/*/. pinned-sha ]` | ABORT |
+| Faz 4 | `.claude-cache/refs-graph.json` | `[ -s .claude-cache/refs-graph.json ]` | ABORT |
+| Faz 5 | `graphify-out/user-graph-full.json` | `[ -s graphify-out/user-graph-full.json ]` | ABORT |
+| Faz 8 | `<project>/STM32_REVIEW_<YYYY-MM-DD>.md` | `[ -f <project>/STM32_REVIEW_*.md ]` | ABORT |
+
+**Citation-Mandatory rule (applies from Faz 6 onward):**
+Every finding line MUST include `at: <file>:<line>` referencing actual
+bytes on disk. Before emitting "X is missing" / "Y is wrong":
+1. `grep -rn "<symbol>" <user-project>` → if found elsewhere, finding is CANCELLED (mark "verified-present")
+2. `graphify query "<symbol>" --graph graphify-out/user-graph-full.json` → if defined, finding is CANCELLED
+3. HAL/LL behavior claims MUST cite `.claude-cache/refs/<path>:<line>` — never from memory
+
+Findings without ≥1 ST-repo or user-code citation are FORBIDDEN.
+
+**USE-THE-REFS forcing rule (applies from Faz 6 onward):**
+Faz 3'te ST canonical kodu `.claude-cache/refs/` altına indirildi. Faz 6'ya
+başlamadan ÖNCE, user'ın init ettiği HER peripheral için en az 1 canonical
+ST örneği aç ve okuyup karşılaştır. "Memory benzerlik" yerine "side-by-side
+diff" zorunlu. Konkret algoritma:
+```
+for peripheral in user_peripherals (FDCAN, OCTOSPI, SPI, USART, DMA, ETH, USB, ...):
+    canonical = find .claude-cache/refs -name 'main.c' -path "*${peripheral}*" | head -3
+    if canonical empty:
+        # specific example yok → driver header'ında HAL_Init validation oku
+        canonical = .claude-cache/refs/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_${peripheral}.c
+    Read(canonical)  # MANDATORY
+    diff against user's MX_${peripheral}_Init
+    cite differences with file:line on BOTH sides
+```
+Bu adımı atlamak skill'i ezberden çalışmaya düşürür — Faz 3'ün tüm değeri kaybolur.
+
+**Fault-Evidence-First rule (Mode D + Mode B+ ile HardFault iddiası) — HARD STOP GATE:**
+
+Kullanıcı "HardFault yapıyor" / "crash oluyor" / "ışık yanıyor sonra duruyor"
+derse, **diğer tüm Faz'lardan ÖNCE** şu prosedür çalışır:
+
+```
+1. grep -A5 "HardFault_Handler" stm32h7xx_it.c
+   body sadece while(1)?  ──► EMPTY HANDLER
+
+2. EMPTY HANDLER ise:
+   ┌────────────────────────────────────────────────────────┐
+   │  ❌  STOP. Faz 2-7'YE GEÇME. Aday üretme.              │
+   │                                                        │
+   │  Çıktı sadece şu olur:                                 │
+   │  "Fault handler boş — CFSR olmadan kök sebep bulunamaz.│
+   │   ref-fault-handlers.md §'Canonical Naked Handler'       │
+   │   bölümündeki ARM Apache-2.0 örnek kodu (~20 satır)    │
+   │   stm32h7xx_it.c'ye yapıştır. Debug session'da while(1)│
+   │   'e breakpoint koy, fault'a yakalan, şu register      │
+   │   snapshot'ı gönder: CFSR, HFSR, DFSR, BFAR, MMFAR,    │
+   │   stacked PC, LR, R0-R3."                              │
+   │  + ref-fault-handlers.md'ye link                       │
+   │  + nasıl yakalanır talimatı (Keil µVision Fault Reports│
+   │    diyalogu / CubeIDE Live Expressions)                │
+   └────────────────────────────────────────────────────────┘
+
+3. CFSR/HFSR/BFAR/MMFAR/PC/LR snapshot geldi ise:
+   - CFSR decode et (IBUSERR / PRECISERR / IMPRECISERR / UNALIGNED /
+     DIVBYZERO / UNDEFINSTR / NOCP / INVPC / INVSTATE)
+   - PC'yi .map dosyasıyla eşleştir (arm-none-eabi-addr2line veya nm)
+   - BFAR/MMFAR adresini memory map'le eşleştir (FLASH / SRAM /
+     peripheral / SRAMCAN / OCTOSPI / unmapped)
+   - SP unwind ile call-chain çıkar
+   - TEK ROOT CAUSE emit et HIGH-CONF olarak
+   
+4. Fault evidence YOKSA ve user "disable X → no fault" gibi
+   yarı-bisection kanıt verdiyse:
+   - Bu kanıt + Faz 6 USE-THE-REFS side-by-side diff = MED-CONF
+   - Birden fazla aday SAYMA — en yakın canonical-divergence olanı seç
+   - Diğerleri "ALTERNATE HYPOTHESIS" olarak ek satırda kal
+```
+
+**Forbidden patterns (bu oturum hataları):**
+- ❌ "5 candidate olabilir, hepsi LOW-CONF" — aday listesi yasak
+- ❌ "FDCAN2 priority 0 olduğu için" + ezberden RTX5 SVC reasoning
+  (ref-fdcan-multi.md citation tek başına yetmez; RTX_Config.h SVC priority
+  ile bizzat doğrulama gerek)
+- ❌ User'ın "fdcan2 disable → fix" kanıtını HIGH-CONF üretmek için
+  KULLANIRKEN cite etmemek — her HIGH-CONF en az 2 bağımsız kaynak
+- ❌ Empty fault handler tespit ettikten sonra aday saymaya devam etmek
+- ❌ "Acaba şu olabilir mi" tarzı tahmin paragrafları
+
+**ALTERNATE HYPOTHESIS slot (en fazla 1 satır):**
+"Bu finding doğrulanmazsa ikinci olasılık: [<X>, <CFSR ile ayırt edilir>]"
+Üçüncü olasılık bile yazma — gürültü yapma.
+
 ### Pipeline Overview (9 phases)
 
 ```
@@ -156,6 +252,19 @@ Aşağıdakilerden HERHANGİ BİRİ → B+:
 Tek dosya snippet ya da "şu fonksiyona bak" → Mode B (kısa), B+ değil.
 
 ### Faz 1 — MCU + Toolchain Tespiti
+
+**Precedence rule (file evidence > directory name > user words):**
+
+| Kaynak | Güven | Örnek |
+|--------|-------|-------|
+| `.ioc` `Mcu.Name=` / `Mcu.Family=` | **HIGH** — kazanır | `Mcu.Name=STM32H730VBTx` |
+| `*.uvprojx <Device>`, `*.cproject` STM32-target | **HIGH** | `<Device>STM32G474RETx</Device>` |
+| `startup_stm32<part>.s` | **HIGH** | `startup_stm32h730xx.s` |
+| `#include "stm32<fam>xx_hal.h"` (main.c) | **MED** | `#include "stm32g4xx_hal.h"` |
+| Dizin adı (`my_g4_project/`) | **LOW** — IGNORE if file evidence says farklı | — |
+| Kullanıcının söylediği "g4 projesi" | **LOWEST** — IGNORE if file evidence varsa | — |
+
+**Çakışma davranışı:** Dizin adı veya user "G4" diyor ama dosyalar H7 ise → **H7 olarak devam et**, raporda discrepancy not düş ("dir/user label said G4 but files indicate H7 — file evidence wins"). Yanlış aile ile Faz 3'e geçmek yanlış repo indirir, pipeline çürür.
 
 Sıralı arama (kullanıcıya SORMADAN ÖNCE bunları dene):
 
@@ -338,43 +447,115 @@ grep -i 'AN5188\|AN3155\|AN2606' ref-iap-ota.md ref-secure-boot.md
 
 ### Faz 3 — Reference Acquisition (sparse clone)
 
-Tüm STM32Cube klonlamak ~2 GB. Sadece **MCU-uygun** kısımları çek:
+**Parametric — MCU ailesinden türetilir, ASLA hardcoded olmaz.**
+
+Tüm STM32Cube klonlamak ~2 GB. Sadece **MCU-uygun** kısımları çek.
 
 ```bash
-# Adım A: Hangi referans projelerin uygun olduğunu keşfet
-gh search code "STM32<part>" --owner=STMicroelectronics --filename='main.c' \
-    --json repository,path > .claude-cache/refs-discovery.json
+# === Adım 0: MCU ailesini parça numarasından türet (Faz 1 çıktısı) ===
+# STM32H730VBTx → FAMILY=H7,  HAL_PREFIX=STM32H7xx
+# STM32G474RETx → FAMILY=G4,  HAL_PREFIX=STM32G4xx
+# STM32F407VGTx → FAMILY=F4,  HAL_PREFIX=STM32F4xx
+# STM32L476RGTx → FAMILY=L4,  HAL_PREFIX=STM32L4xx
+# STM32U585AIIx → FAMILY=U5,  HAL_PREFIX=STM32U5xx
+# STM32H563ZITx → FAMILY=H5,  HAL_PREFIX=STM32H5xx
+# STM32F746ZGTx → FAMILY=F7,  HAL_PREFIX=STM32F7xx
+# STM32G071RBTx → FAMILY=G0,  HAL_PREFIX=STM32G0xx
+# STM32WB55RGVx → FAMILY=WB,  HAL_PREFIX=STM32WBxx
+# STM32MP157AAA → FAMILY=MP1, HAL_PREFIX=STM32MP1xx
+# ... (ref-st-github-map.md ailesi katalog)
 
-# Adım B: Pin-compatible / silikon-yakın board'ları belirle
-#   H730 → H735G-DK (ExtMem_CodeExecution), H750B-DK (QSPI/FMC)
-#   H7A3 → STM32H7B3I-EVAL
+FAMILY=$(echo "$PART_NUMBER" | sed -E 's/^STM32([A-Z][0-9]).*/\1/')   # → H7
+HAL_PREFIX="STM32${FAMILY}xx"
+REPO="STM32Cube${FAMILY}"
+CACHE_DIR=".claude-cache/refs/${REPO}"
+
+# === Adım A: Hangi referans projelerin uygun olduğunu keşfet ===
+gh search code "STM32${PART_NUMBER%??}" --owner=STMicroelectronics \
+    --filename='main.c' --json repository,path \
+    > .claude-cache/refs-discovery.json
+
+# === Adım B: Aile için pin-compatible / silikon-yakın board'ları belirle ===
+# ref-st-github-map.md §3 tablosundan bak. Tipik eşleme:
+#   H7   → H735G-DK / H750B-DK / H743ZI-NUCLEO / NUCLEO-H723ZG
+#   G4   → NUCLEO-G474RE / STM32G474E-EVAL / B-G474E-DPOW1
+#   F4   → STM32F4-Discovery / NUCLEO-F411RE / STM32F4-EVAL
+#   L4   → NUCLEO-L476RG / STM32L4R9I-DISCO
+#   U5   → NUCLEO-U575ZI-Q / STM32U5A9J-DK
 #   H5   → NUCLEO-H563ZI / STM32H573I-DK
-#   ... (ref-st-github-map.md tablo §3'e bak)
+#   F7   → STM32F769I-DISCO / NUCLEO-F767ZI
+#   G0   → NUCLEO-G071RB / NUCLEO-G0B1RE
+# Pipeline'ın bilinmeyen aile karşısındaki davranışı: refs-discovery.json'dan
+# en çok eşleşen Projects/<BOARD>/ alt-ağacını otomatik seç.
 
-# Adım C: Sparse clone — sadece ilgili Projects + Drivers
-mkdir -p .claude-cache/refs/STM32CubeH7
-cd .claude-cache/refs/STM32CubeH7
+# === Adım C: Sparse clone — Projects + HAL driver ===
+mkdir -p "${CACHE_DIR}"
+cd "${CACHE_DIR}"
 git clone --filter=blob:none --sparse --depth=1 \
-    https://github.com/STMicroelectronics/STM32CubeH7.git .
-git sparse-checkout set \
-    Projects/STM32H735G-DK/Applications/ExtMem_CodeExecution \
-    Projects/STM32H750B-DK/Examples \
-    Drivers/STM32H7xx_HAL_Driver \
-    Drivers/CMSIS/Device/ST/STM32H7xx
+    "https://github.com/STMicroelectronics/${REPO}.git" .
 
-# Adım D: Reference SHA pinle (B4)
-git rev-parse HEAD > .claude-cache/refs/STM32CubeH7/.pinned-sha
+# ⚠️ STM32Cube* repolarında HAL_Driver ve CMSIS/Device/ST/${HAL_PREFIX}
+# alt-yolları **git submodule** (160000 commit mode). `sparse-checkout set`
+# bunları "not a directory" hatasıyla reddeder. İki adım gerekli:
+
+# Faz 1.5'te tespit edilen project type'a göre Examples alt-ağaçlarını seç.
+# Bu liste **dinamik** — her project type için farklı:
+EXAMPLE_PATHS=$(case "${PROJECT_TYPE}" in
+    bootloader|xip)      echo "Projects/*/Applications/ExtMem_CodeExecution" ;;
+    motor_control)       echo "Projects/*/Examples/HRTIM Projects/*/Examples/TIM" ;;
+    automotive_gateway)  echo "Projects/*/Examples/FDCAN Projects/*/Applications/USB_Host" ;;
+    iot)                 echo "Projects/*/Applications/LwIP Projects/*/Applications/MbedTLS" ;;
+    sensor_node)         echo "Projects/*/Examples/I2C Projects/*/Examples/ADC" ;;
+    *)                   echo "Projects/*/Examples/GPIO" ;;
+esac)
+
+git sparse-checkout set --skip-checks \
+    ${EXAMPLE_PATHS} \
+    "Drivers/${HAL_PREFIX}_HAL_Driver" \
+    "Drivers/CMSIS/Device/ST/${HAL_PREFIX}"
+
+# Sonra submodule'leri MANUEL init et (skip-checks bunu yapmaz):
+git submodule update --init --depth=1 "Drivers/${HAL_PREFIX}_HAL_Driver"
+git submodule update --init --depth=1 "Drivers/CMSIS/Device/ST/${HAL_PREFIX}"
+
+# === Adım D: Reference SHA pinle (B4) ===
+git rev-parse HEAD > "${CACHE_DIR}/.pinned-sha"
+
+# Adım E (ZORUNLU) — Disk gate: artifacts var mı? (family-agnostic)
+find .claude-cache/refs -name '*.c' | head -1 | grep -q . \
+  || { echo "FAZ 3 FAIL: hiçbir referans .c yok"; exit 1; }
+find .claude-cache/refs -name '.pinned-sha' | head -1 | grep -q . \
+  || { echo "FAZ 3 FAIL: .pinned-sha yok"; exit 1; }
+find .claude-cache/refs -path "*/Drivers/STM32*xx_HAL_Driver/Src/*.c" | head -1 | grep -q . \
+  || { echo "FAZ 3 FAIL: HAL_Driver submodule init edilmedi"; exit 1; }
 ```
 
 Çıktı: `.claude-cache/refs/` ~50-200 MB; her referansta `.pinned-sha`.
 
+**Hard gate:** Yukarıdaki Adım E exit-code 0 değilse skill ABORT eder ve
+şunu yazar: "ST referansı indirilemedi — review yapılamaz. İnternet/gh
+auth kontrolü gerek." ASLA ezbere review'a düşme.
+
 ### Faz 4 — Reference Graph (canonical patterns)
 
+**Pre-gate:** `[ -s .claude-cache/refs-discovery.json ] && find .claude-cache/refs -name '*.c' | head -1 | grep -q .` — geçmezse Faz 3'e geri dön.
+
 ```bash
+# graphify komutu yoksa ZORUNLU install (skip fallback YOK)
+command -v graphify >/dev/null 2>&1 || {
+    pip3 install --user graphifyy \
+      || { echo "FAZ 4 FAIL: graphifyy install başarısız"; exit 1; }
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
 # Vendor isimlerini SIGNAL olarak tut (Mode B'deki filter'ın TERSİ)
 graphify .claude-cache/refs --no-viz \
     --include-pattern='HAL_*|LL_*|BSP_*|SCB_*|__NVIC_*|__HAL_RCC_*' \
     --out .claude-cache/refs-graph.json
+
+# Post-gate: artifact diskte mi?
+[ -s .claude-cache/refs-graph.json ] \
+  || { echo "FAZ 4 FAIL: refs-graph.json üretilmedi"; exit 1; }
 ```
 
 Çıktı: ST'nin kanonik HAL/LL kullanım örüntüsü.
@@ -391,6 +572,10 @@ graphify <user-project> --no-viz \
 
 # Full graph da kaydet (Faz 8 manuel review için)
 graphify <user-project> --no-viz --out graphify-out/user-graph-full.json
+
+# Post-gate: her iki graph da diskte mi?
+[ -s graphify-out/user-graph-mcu.json ] && [ -s graphify-out/user-graph-full.json ] \
+  || { echo "FAZ 5 FAIL: user graph üretilmedi"; exit 1; }
 ```
 
 #### 5.A2 — CubeMX Regen + Diff (sadece .ioc varsa)
@@ -427,6 +612,64 @@ graphify query "shared variables between ISR handlers and tasks" \
 #   - size > 4 byte mı?  → atomic değil → kritik bölge gerek
 #   - ISR_PRIORITY ≥ configMAX_SYSCALL_INTERRUPT_PRIORITY mi?
 ```
+
+#### 5.A5 — Per-Peripheral Canonical Diff (ZORUNLU — bu adım atlanırsa Faz 6 çürür)
+
+User'ın `MX_*_Init` çağırdığı HER peripheral için **side-by-side** diff:
+
+```bash
+# 1. Kullanıcının init ettiği peripheral'ları listele
+USER_PERIPHS=$(grep -h "MX_.*_Init\b" <user-project>/Core/Src/main.c \
+              | grep -oE "MX_[A-Z0-9_]+_Init" | sort -u)
+# Örnek: MX_GPIO_Init MX_DMA_Init MX_FDCAN1_Init MX_FDCAN2_Init MX_SPI1_Init ...
+
+for periph in $USER_PERIPHS; do
+    NAME=${periph#MX_}     # FDCAN1_Init → FDCAN1
+    NAME=${NAME%_Init}     # FDCAN1
+    BASE=${NAME%%[0-9]*}   # FDCAN1 → FDCAN, USART2 → USART
+    
+    # 2. ST canonical örnek bul
+    REF=$(find .claude-cache/refs -path "*Examples/${BASE}*" -name 'main.c' | head -1)
+    [ -z "$REF" ] && \
+        REF=".claude-cache/refs/.../Drivers/STM32${FAMILY}xx_HAL_Driver/Src/stm32${family}xx_hal_${base}.c"
+    
+    # 3. User'ın init config'iyle canonical karşılaştır
+    USER_CONF=$(awk "/h${name}\.Init/,/HAL_${BASE}_Init\(/" <user-project>/Core/Src/${base}.c)
+    REF_CONF=$(awk "/h${name}\.Init/,/HAL_${BASE}_Init\(/" "$REF")
+    diff <(echo "$USER_CONF") <(echo "$REF_CONF")
+    
+    # 4. NVIC priority'leri ÇIKAR — her ikisinden, side-by-side
+    grep "HAL_NVIC_SetPriority.*${NAME}" <user-project>/Core/Src/${base}.c
+    grep "HAL_NVIC_SetPriority.*${BASE}" "$REF"
+done
+```
+
+**Findings emit ETMEDEN ÖNCE her finding için:** kanonik referansta KARŞILIĞINI gör. Yoksa finding **CANCELLED** veya "no canonical equivalent — best practice claim only" notu.
+
+#### 5.A6 — Stale SystemCoreClock × HAL_GetTick Cross-Check
+
+```bash
+# 1. SystemClock_Config çağrılıyor mu?
+SCC_CALLED=$(grep -c "SystemClock_Config()" <user-project>/Core/Src/main.c)
+# Çağrılan satırın #ifdef sarmasında olup olmadığını kontrol et
+awk '/SystemClock_Config()/' <user-project>/Core/Src/main.c | \
+    while read -r line; do
+        # Bu satırın etrafındaki #ifdef'i bul
+        echo "context: $line"
+    done
+
+# 2. SystemInit gövdesi #ifdef sarmasında mı?
+grep -B2 "void SystemInit" <user-project>/Core/Src/system_*.c | head -5
+grep -A3 "^void SystemInit" <user-project>/Core/Src/system_*.c | grep '#ifdef'
+
+# 3. Bu shorted ise: HAL_GetTick kullanan TÜM peripheral init'lerini listele
+#    (HAL_FDCAN_Init, HAL_USART_Init, HAL_I2C_Init, ... — hepsi HAL_GetTick'le timeout)
+grep -l "HAL_GetTick\|FDCAN_TIMEOUT_VALUE\|UART_TIMEOUT_VALUE" \
+    .claude-cache/refs/<repo>/Drivers/STM32*_HAL_Driver/Src/
+```
+
+Eğer SystemClock_Config skipped VE peripheral init'leri HAL_GetTick polling kullanıyorsa →
+**TEK finding** olarak emit et: "stale SystemCoreClock × HAL_GetTick timeout race" — birden fazla peripheral'ı ayrı ayrı yazma, root cause aynı.
 
 ### Faz 6 — Benchmark + Confidence Scoring (B1)
 
@@ -482,10 +725,24 @@ Sadece Faz 7'den "CANDIDATE BUG" işaretli divergence'ları al. Her biri için:
 
 1. Source dosyayı aç (Read), tam context'i gör
 2. Karşılığını ST referans dosyasında aç, karşılaştır
-3. Bug muhtemel ise: Finding Template'e yaz (severity + confidence)
-4. False positive ise: kaydet ama emit etme (cache for next run)
+3. **Cross-file doğrulama (ZORUNLU):** Finding emit etmeden önce:
+   ```bash
+   grep -rn "<symbol>" <user-project>
+   graphify query "definitions of <symbol>" --graph graphify-out/user-graph-full.json
+   ```
+   Symbol başka dosyada tanımlıysa → finding **iptal**, "verified-present"
+4. Bug muhtemel ise: Finding Template'e yaz (severity + confidence + `at: file:line`)
+5. False positive ise: kaydet ama emit etme (cache for next run)
 
-**Final output:**
+**ZORUNLU: Rapor diske yazılır.** Final output sadece chat'e basılmaz —
+`Write` tool ile şuraya kaydedilir:
+```
+<user-project>/STM32_REVIEW_<YYYY-MM-DD>.md
+```
+Dosya diskte yoksa skill INCOMPLETE — chat'e bu mesaj basılır:
+"⚠️ STM32_REVIEW_*.md disk'e yazılmadı, review eksik."
+
+**Final output (rapor template'i):**
 ```
 PROJECT SUMMARY (Faz 1.5'ten):
   [bir paragraf — project ne yapıyor]
@@ -495,10 +752,22 @@ MCU + TOOLCHAIN:
 
 REFERENCE BENCHMARK:
   Compared against:
-    - STM32CubeH7@a3f2b9c:Projects/STM32H735G-DK/.../ExtMem_Boot
-    - STM32CubeH7@a3f2b9c:Projects/STM32H750B-DK/Examples/QSPI
+    - STM32Cube<FAMILY>@<sha>:Projects/<BOARD>/.../<Example>
+    - <repeat per peripheral that was diffed>
+  Per-peripheral side-by-side coverage:
+    FDCAN1  ✓ refs:Projects/.../FDCAN/FDCAN_Loopback/Src/main.c
+    FDCAN2  ✓ same canonical (no dual-FDCAN ST example — used skill ref-fdcan-multi.md)
+    SPI1    ✓ Drivers/STM32<F>xx_HAL_Driver/Src/stm32<f>xx_hal_spi.c
+    ...
+  Peripherals WITHOUT canonical comparison: <list> — findings on these are LOW-CONF.
   Total divergences in MCU-interface surface: N
-  
+
+GRAPHIFY MODE:
+  ⚠️ AST-only (graphify update — no LLM semantic clustering)
+  Reason: graphify extract needs ANTHROPIC/GEMINI/OPENAI key; Claude Code session
+  hook integration not yet available. Semantic similarity not used in this report;
+  findings derive from direct file:line reads + HAL driver source diff.
+
 APPLIED ERRATA CONTEXT:
   - ES0480 §2.1.1 AXIRAM (workaround verified present)
   - AN5312 ODEN sequence (workaround MISSING → finding below)
@@ -1222,15 +1491,24 @@ Before declaring firmware "done for production":
 **Procedure:**
 
 ```
-1. Check: [ -f graphify-out/GRAPH_REPORT.md ]
+1. Check: [ -f graphify-out/GRAPH_REPORT.md ] || [ -s graphify-out/graph.json ]
    - EXISTS → Read it, jump to Step 2
    - MISSING → run graphify:
-       Bash: graphify . --no-viz   (run from project root)
+       Bash: graphify update .   (run from project root — DEFAULT, AST-only, no LLM)
      If `graphify` command is missing, install:
        macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
        Linux  : pip3 install --user graphifyy
        Windows: py -m pip install graphifyy
-     If install also fails, SKIP graphify and tell the user — do not block review.
+     Install MUST succeed; if pip3 fails, retry with python3 -m pip install --user graphifyy.
+     If even retry fails, ABORT the review — do NOT fall back to memory.
+
+   ⚠️ **graphify CLI subcommand kullan — `graphify .` formu YOK:**
+     • `graphify update <path>`  → AST-only, LLM key gerekmez (DEFAULT)
+     • `graphify extract <path>` → AST + semantic LLM (key gerekir; GEMINI/ANTHROPIC/OPENAI)
+     • `graphify query "<Q>" --graph <json>` → BFS sorgu
+     • `graphify path "A" "B" --graph <json>` → kısa yol
+   Default `update`; `extract` yalnız env var varsa. Claude Code session hook
+   entegrasyonu **henüz yok** → semantic kümeleme yokken `update` ile devam et.
 
 2. After graphify completes:
    - Read graphify-out/GRAPH_REPORT.md — God Nodes + Surprising Connections
