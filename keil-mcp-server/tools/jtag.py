@@ -20,7 +20,7 @@ _BSDL_CACHE = Path.home() / ".keil-mcp-bsdl"
 
 def bsdl_find(mcu_name: str) -> str | None:
     """
-    Find a BSDL file for the given MCU name.
+    Find a BSDL file for the given MCU name. Read-only — no disk side effects.
 
     Search order:
     1. Local cache: ~/.keil-mcp-bsdl/<mcu>*.bsd
@@ -29,12 +29,11 @@ def bsdl_find(mcu_name: str) -> str | None:
     If not found, the user must manually place the file in ~/.keil-mcp-bsdl/
     (ST provides BSDL files at st.com/resource/en/boundary_scan_description_language/).
     """
-    _BSDL_CACHE.mkdir(exist_ok=True)
-
-    for f in _BSDL_CACHE.glob(f"*{mcu_name}*.bsd"):
-        return str(f)
-    for f in _BSDL_CACHE.glob(f"*{mcu_name}*.bsdl"):
-        return str(f)
+    if _BSDL_CACHE.exists():
+        for f in _BSDL_CACHE.glob(f"*{mcu_name}*.bsd"):
+            return str(f)
+        for f in _BSDL_CACHE.glob(f"*{mcu_name}*.bsdl"):
+            return str(f)
 
     for pattern in [
         rf"C:\Keil_v5\ARM\Pack\Keil\STM32*_DFP\*\**\*{mcu_name}*.bsd",
@@ -48,10 +47,12 @@ def bsdl_find(mcu_name: str) -> str | None:
 
 
 async def jtag_bsdl_find(mcu_name: str) -> list[TextContent]:
-    """Locate the BSDL file for the given MCU."""
+    """Locate the BSDL file for the given MCU. Creates the cache dir on miss
+    so the user has somewhere to drop the downloaded file."""
     path = bsdl_find(mcu_name)
     if path:
         return _text(f"Found BSDL: {path}")
+    _BSDL_CACHE.mkdir(exist_ok=True)
     cache = str(_BSDL_CACHE)
     return _text(
         f"BSDL not found for {mcu_name}.\n"

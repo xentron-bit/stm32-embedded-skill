@@ -1,21 +1,27 @@
 {
   "permissions": {
     "allow": [
-      "Edit(~/.claude/skills/stm32-embedded-dev/**)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev log --all --oneline --name-only)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev remote -v)",
-      "Bash(git branch *)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev log --all -p)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev show HEAD:README.md)",
-      "Bash(git -C /Users/akeles/.claude/skills/stm32-embedded-dev push origin main --force)",
-      "WebFetch(domain:graphify.net)",
-      "Bash(python3 -m graphify --help)",
-      "Bash(graphify run *)",
+      "Edit(./**)",
       "Bash(graphify --help)",
-      "Bash(graphify claude *)",
       "Bash(graphify --version)",
       "Bash(graphify version *)",
-      "Bash(mdfind \"kMDItemCFBundleIdentifier == 'md.obsidian'\")"
+      "Bash(graphify run *)",
+      "Bash(graphify query *)",
+      "Bash(graphify path *)",
+      "Bash(graphify install *)",
+      "Bash(graphify export *)",
+      "Bash(pip3 install graphifyy *)",
+      "Bash(python3 -m graphify *)",
+      "Bash(git -C . log --oneline -*)",
+      "Bash(git -C . status)",
+      "Bash(git -C . diff)",
+      "Bash(git -C . show *)",
+      "Bash(git -C . branch *)",
+      "WebFetch(domain:arm-software.github.io)",
+      "WebFetch(domain:developer.arm.com)",
+      "WebFetch(domain:www.keil.com)",
+      "WebFetch(domain:www.st.com)",
+      "WebFetch(domain:docs.anthropic.com)"
     ]
   }
 }

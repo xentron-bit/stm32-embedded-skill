@@ -113,8 +113,19 @@ Write-Host ("  [OK]  " + (T "Download complete" "Indirme tamamlandi")) -Foregrou
 if (Test-Path $EXTRACT) { Remove-Item $EXTRACT -Recurse -Force }
 Expand-Archive -Path $ZIP_FILE -DestinationPath $EXTRACT -Force
 $SOURCE = Join-Path $EXTRACT "stm32-embedded-skill-main\keil-mcp-server"
-if (Test-Path $DEST_DIR) { Remove-Item $DEST_DIR -Recurse -Force }
-Copy-Item -Path $SOURCE -Destination $DEST_DIR -Recurse
+
+# Preserve any user files: backup existing DEST, then xcopy on top
+if (Test-Path $DEST_DIR) {
+    $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $BACKUP = "$DEST_DIR.bak-$stamp"
+    Write-Host ("  [!!]  " + (T "Existing dir found, backing up to $BACKUP" `
+                                  "Mevcut dizin yedeklendi: $BACKUP")) -ForegroundColor Yellow
+    Copy-Item -Path $DEST_DIR -Destination $BACKUP -Recurse -Force
+} else {
+    New-Item -ItemType Directory -Path $DEST_DIR | Out-Null
+}
+# xcopy /Y /E preserves user-added files, overwrites tracked ones
+& cmd /c "xcopy /E /Y /Q `"$SOURCE\*`" `"$DEST_DIR\`"" | Out-Null
 Remove-Item $ZIP_FILE -Force -ErrorAction SilentlyContinue
 Remove-Item $EXTRACT -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ("  [OK]  $DEST_DIR") -ForegroundColor Green

@@ -31,7 +31,7 @@ python install.py
 
 Claude'u yeniden başlat, hazır.
 
-## 26 Araç
+## 29 Araç
 
 | Kategori | Araçlar |
 |----------|---------|
@@ -61,11 +61,10 @@ Claude'u yeniden başlat, hazır.
 
 ```
 keil-mcp-server/
-├── install.py        ← Tek komut kurulum
-├── server.py         ← MCP giriş noktası (26 araç)
+├── install.py        ← Tek komut kurulum (atomic, .bak yedek)
+├── server.py         ← MCP giriş noktası
 ├── config.py         ← Araç yolu tespiti + persist
 ├── state.py          ← Global debug session state
-├── setup.py          ← Manuel MCP kayıt
 ├── requirements.txt
 └── tools/
     ├── cubemx.py     ← IOC read/modify + headless generate

@@ -43,7 +43,15 @@ def install_deps():
     if result.returncode != 0:
         print(f"  ERROR: {result.stderr.strip()}")
         sys.exit(1)
-    print("  OK -- mcp, pygdbmi, pydantic installed")
+    pkgs = []
+    try:
+        for line in req.read_text(encoding="utf-8").splitlines():
+            name = line.split("#", 1)[0].split(">=", 1)[0].split("==", 1)[0].strip()
+            if name:
+                pkgs.append(name)
+    except OSError:
+        pkgs = ["(requirements.txt unreadable)"]
+    print(f"  OK -- installed: {', '.join(pkgs)}")
 
 
 # -- 2. Tool detection --------------------------------------------------------
@@ -71,29 +79,62 @@ MCP_ENTRY = {
 }
 
 
+def _safe_update_json(cfg_path: Path, mutator) -> bool:
+    """
+    Safely update a JSON config file: backup, parse, mutate, atomic write.
+
+    Refuses to overwrite if the file exists but cannot be parsed — preserves
+    user state (Claude Code's ~/.claude.json holds project history, OAuth,
+    permissions; ~/.claude/settings.json holds permissions/hooks).
+    """
+    if cfg_path.exists():
+        try:
+            raw = cfg_path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"  ABORT — cannot read {cfg_path}: {e}", file=sys.stderr)
+            return False
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as e:
+            print(f"  ABORT — {cfg_path} is not valid JSON ({e}). "
+                  "Refusing to overwrite. Fix the file by hand and re-run.",
+                  file=sys.stderr)
+            return False
+        # Backup once per install run
+        backup = cfg_path.with_suffix(cfg_path.suffix + ".keil-mcp.bak")
+        try:
+            backup.write_text(raw, encoding="utf-8")
+        except OSError as e:
+            print(f"  WARN — could not write backup {backup}: {e}", file=sys.stderr)
+    else:
+        data = {}
+
+    mutator(data)
+
+    # Atomic write via tmp + replace
+    tmp = cfg_path.with_suffix(cfg_path.suffix + ".keil-mcp.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, cfg_path)
+    return True
+
+
 def _write_claude_json(cfg_path: Path):
     """Write to ~/.claude.json (Claude Code CLI user-scope MCP config)."""
-    try:
-        data = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        data = {}
-    data.setdefault("mcpServers", {})["keil-mcp"] = MCP_ENTRY
-    cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    return True
+    return _safe_update_json(
+        cfg_path,
+        lambda d: d.setdefault("mcpServers", {}).__setitem__("keil-mcp", MCP_ENTRY),
+    )
 
 
 def _write_desktop_config(cfg_path: Path):
     """Write to Claude Desktop claude_desktop_config.json (no type field needed)."""
     if not cfg_path.exists():
         return False
-    try:
-        data = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        data = {}
     entry = {k: v for k, v in MCP_ENTRY.items() if k != "type"}
-    data.setdefault("mcpServers", {})["keil-mcp"] = entry
-    cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    return True
+    return _safe_update_json(
+        cfg_path,
+        lambda d: d.setdefault("mcpServers", {}).__setitem__("keil-mcp", entry),
+    )
 
 
 def register_mcp():
