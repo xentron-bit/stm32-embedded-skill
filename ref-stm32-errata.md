@@ -453,6 +453,22 @@ FLASH_OPTCR.nBOOT0 (H7):
 §2.4.1  OCTOSPI: Yüksek frekansta DHQC gerekli
         → hospi.Init.DelayHoldQuarterCycle = HAL_OSPI_DHQC_ENABLE
 
+§2.4.4  OCTOSPI memory-mapped mode: SON BYTE okuma AXI stall yapar
+        → CPU/MDMA mem-mapped region'ın son byte'ını okuyunca AXI matrix
+          takılır, CPU askıya alınır. Prefetch'li read'ler kolayca tetikler.
+        → Workaround: mem-mapped region'ı bir cache-line altında deklare et
+          (örn. 16MB flash için region'ı 16MB - 32B olarak ayarla); veya
+          MPU ile son cache-line'ı non-accessible işaretle.
+        → Symptom: işlem rastgele askıya alınıyor, breakpoint'le yakalanmaz.
+        → Forum thread: community.st.com td-p/169513
+
+OSPI HAL state-machine bug (ES değil, HAL bug):
+        HAL_OSPI_MemoryMapped() bazen state'i geçirmiyor, return HAL_OK
+        olduğu halde MM aktive olmamış oluyor.
+        → Workaround: çağrı öncesi HAL_OSPI_Abort() + state reset
+        → Symptom: read at 0x90000000 → bus fault (MM mode değil)
+        → Forum thread: community.st.com td-p/586945
+
 §2.5.1  FDCAN: TX buffer underflow düşük öncelikte oluşabilir
         → TX FIFO mode yerine TX Queue mode kullan
 

@@ -103,8 +103,47 @@ Pick one explicitly. Mixed pattern = silent brick.
 | `keshikan/STM32H7_USB-DFU_Bootloader` | NUCLEO-H723ZG USB-DFU bootloader, CubeIDE 1.10, "reset-everything" pattern. Blog: https://www.keshikan.net/gohantabeyo/?p=2279 |
 | `viktorvano/STM32_USB_DFU_Bootloader` | F4/F7 USB DFU IAP example |
 | `akospasztor/stm32-bootloader` | UART/CAN/SD-card multi-channel BL, MIT licensed |
+| `wolfSSL/wolfBoot` | Production-grade OS-agnostic secure BL — first-class STM32 incl. L5/U5/H5 TrustZone, dual-bank, post-quantum signatures. Strongest open-source SBSFU alternative. Per-family `hal/stm32*.c`. |
+| `STMicroelectronics/stm32-mw-mcuboot` | ST middleware fork of MCUboot — integrated into STM32Cube packages (H5/U5/L5). Use this over upstream MCUboot for ST-board examples. |
+| `STMicroelectronics/stm32-external-loader` | Source of ST's `.stldr` external loaders (basis for CubeProgrammer's external-flash programming). Essential when authoring custom QSPI/OSPI/HyperFlash loaders. |
+| `redlightASl/H750-Flash-Booter` | Compact H750 external-QSPI flash bootloader (ART-Pi heritage) — directly targets the 128KB-internal-flash pain point (H750/H7B0/H730/H735). |
+| `firmwaremodules/stm32-secure-patching-bootloader` | Commercial-grade open core: signed delta-patch updates (AES-CTR + ECDSA). Production references in wild. |
+| `cbiffle/stm32-uart-boot` | Rust client for ST system bootloader UART protocol (AN3155). Clean typed alternative to `stm32flash` for CI/factory scripts. |
+| **MCUboot upstream** | https://github.com/mcu-tools/mcuboot — Industry-standard secure bootloader. Slot layout, swap/overwrite/RAM-load modes. ST has a fork (above) for Cube integration. |
+| **TF-M (Trusted Firmware-M)** | STM32H5/U5 BL2 (MCUboot-based) + secure services. Platform docs: https://tf-m-user-guide.trustedfirmware.org/platform/stm/common/ |
+
+### Production-engineering write-ups (real failure modes, not just docs)
+
+| Source | What's there |
+|--------|--------------|
+| [Memfault DFU Cookbook](https://interrupt.memfault.com/blog/device-firmware-update-cookbook) | Four-stage BL architecture (immutable BL + Loader + App + Updater), STM32F429, working repo. The canonical engineering write-up. |
+| [Memfault MCUboot Overview](https://interrupt.memfault.com/blog/mcuboot-overview) | Slot layout, swap/overwrite/RAM-load modes, flash driver porting, signing flow — bridges MCUboot upstream → shippable. |
+| [Memfault OTA Delta Updates](https://interrupt.memfault.com/blog/ota-delta-updates) | Delta firmware updates for BLE/LoRaWAN bandwidth constraints. |
+| [tech.hoomanely.com — STM32H5 Bank Switching](https://tech.hoomanely.com/firmware-updates-with-bank-switching-on-stm32h5) | H5 SWAP_BANK bit (OPTSR bit 31) deep dive — atomic toggle, rollback, OB gotchas. |
+| [Feabhas Cortex-M7 Cache Series](https://blog.feabhas.com/2020/10/introduction-to-the-arm-cortex-m7-cache-part-2-cache-replacement-policy/) | Necessary context for "clean+invalidate before VTOR jump" handoff order. |
+| [hackmag — Protecting STM32](https://hackmag.com/security/protec-stm32) | Adversarial perspective on RDP, SBSFU, fault injection. Red-team reference. |
+| [VisualGDB — H7R/S Bootloader Debugging](https://visualgdb.com/tutorials/arm/stm32/stm32h7rs/bootloader/) | New H7R/S line — debugging across BL→app handoff (load-vs-symbol mismatches). |
+
+### Forum gold (concrete failure threads worth reading before designing)
+
+- [ST Community — H735 VTOR @ 0x90000000](https://community.st.com/t5/stm32-mcus-boards-and-hardware/setting-vtor-for-application-at-0x90000000-on-stm32h735/td-p/681774) — directly applies to STM32H730 XIP products.
+- [ST Community — H7 custom BL jump HardFault](https://community.st.com/t5/stm32-mcus-embedded-software/jump-issue-with-custom-bootloader-stm32h7/td-p/186554) — canonical thread on D-cache clean / I-cache invalidate / MPU teardown / SysTick disable order.
+- [ST Community — H7B0 OSPI memory-mapped activation bug](https://community.st.com/t5/stm32-mcus-products/stm32h7b0-ospi-not-able-to-activate-memory-mapped-mode-in-read/td-p/586945) — HAL state-machine bug in `HAL_OSPI_MemoryMapped`. Bricking-class. **Relevant to any H7 XIP bootloader.**
+- [ST Community — H7 errata 2.4.4 last-byte AXI stall](https://community.st.com/t5/stm32-mcus-products/stm32h7-crashes-when-reading-the-last-bytes-from-a-memory-mapped/td-p/169513) — Memory-mapped read of last byte causes AXI stall / CPU hang.
+- [CMSIS_5 issue #995](https://github.com/ARM-software/CMSIS_5/issues/995) — Cortex-M7 cache invalidate skipping last set/way. Correctness bug affecting BL handoff sequences.
 
 Community refs are useful for cross-checking philosophy and finding edge cases ST examples don't cover. Always cross-validate against ARM KA001193 + ST AN before adopting a pattern.
+
+### Recent ST docs (2024–2026) — newer than older catalogs
+
+| Doc | What's new |
+|-----|------------|
+| **UM3234** — Boot ROM on STM32N6 | N6 has no internal flash; ROM behavior fundamentally different from H7. The N6 analog of AN2606. |
+| **AN5054** rev 19 (Feb 2026) | Expanded for H5/U5/N6 SFI/HSM secure-programming with CubeProgrammer. |
+| **AN5347** (expanded) | TrustZone now also covers STM32U3 (not just L5/U5). |
+| **AN4992** | Introduction to SFI (paired with AN5054) — production-line encryption + provisioning. |
+| ST Wiki [OEMuRoT for N6](https://wiki.st.com/stm32mcu/wiki/Security:OEMuRoT_for_STM32N6) | OEM updatable Root of Trust — immutable HDP-locked first stage + updatable second stage. Major new arch. |
+| ST Wiki [H5 Secure Boot](https://wiki.st.com/stm32mcu/wiki/Security:Secure_Boot_for_STM32H5) | HDPL, OBK, DHUK, anti-rollback OTP — new H5 building blocks. |
 
 ---
 
