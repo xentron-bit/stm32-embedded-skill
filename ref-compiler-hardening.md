@@ -173,6 +173,201 @@ SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, (int32_t)((total + 31U) & ~31U)
 /* Keil scatter: RW_DMA 0x24000000 { *(.dma_buffer) }  ← AXI SRAM */
 ```
 
+### M7 Memory Type Matrix — Which Region Is Cacheable/Bufferable/Executable
+
+H7 (M7) default memory map per ARMv7-M ARM:
+
+| Region | Address range | Default type | Cacheable | Bufferable | Executable | DMA can access |
+|--------|--------------|--------------|-----------|-----------|-----------|----------------|
+| Code | `0x00000000–0x1FFFFFFF` | Normal | Yes (I-cache) | Yes | Yes | — (depends on alias) |
+| SRAM | `0x20000000–0x3FFFFFFF` | Normal | Yes (D-cache) | Yes | Yes | Some |
+| Peripheral | `0x40000000–0x5FFFFFFF` | Device | **No** | Yes | **No** | N/A |
+| External RAM | `0x60000000–0x7FFFFFFF` | Normal | Yes (D-cache) | Yes | Yes | Some |
+| External RAM | `0x80000000–0x9FFFFFFF` | Normal | Yes | Yes | Yes | Some |
+| External Device | `0xA0000000–0xDFFFFFFF` | Device | No | Yes | No | N/A |
+| System / PPB | `0xE0000000–0xFFFFFFFF` | Strongly-Ordered | No | No | No | N/A |
+
+**STM32H7 specifics (overlaid on the above):**
+
+| Region | Address | DMA reach | Cache visibility | Notes |
+|--------|---------|-----------|------------------|-------|
+| ITCM | `0x00000000` (RAM alias) | **No** | I-cache bypass | CPU-only, 64-cycle fetch when alias used |
+| DTCM | `0x20000000` | **No** | D-cache bypass | CPU-only, zero-wait-state |
+| AXI SRAM | `0x24000000` (512 KB) | Yes (MDMA, BDMA, DMA1/2 via AHB matrix) | D-cache | Default for DMA buffers |
+| SRAM1 (D2) | `0x30000000` (128 KB) | Yes (DMA1/2 + BDMA) | D-cache | Ethernet DMA usually here |
+| SRAM2 (D2) | `0x30020000` (128 KB) | Yes | D-cache | |
+| SRAM3 (D2) | `0x30040000` (32 KB) | Yes | D-cache | |
+| SRAM4 (D3) | `0x38000000` (64 KB) | BDMA only | D-cache | Wake-up domain |
+| Backup SRAM | `0x38800000` (4 KB) | No | D-cache | Battery-backed |
+| OCTOSPI mem-map | `0x90000000–0x9FFFFFFF` | Yes (MDMA only) | I+D-cache via MPU | XIP region |
+
+**DMA-to-DTCM is silently broken** — writes go nowhere, reads return 0. The
+silicon allows the DMA controller to receive the write transaction but the
+AHB-to-TCM bridge doesn't exist. There is no fault. This is the #1 H7 DMA bug.
+
+### MPU Non-Cacheable Region — When to Use, How to Configure
+
+Two strategies for DMA coherency on M7:
+
+**Strategy A (recommended for most cases) — `SCB_Clean/InvalidateDCache_by_Addr`:**
+- Keep DMA buffer in cacheable region
+- Software does explicit cache maintenance around each DMA op
+- See "Cache Boyut Formülü" above
+- Higher throughput (data is cached during CPU access)
+- More error-prone (every DMA op needs the maintenance pair)
+
+**Strategy B — MPU non-cacheable region:**
+- Carve out a region of AXI/D2 SRAM, mark non-cacheable + non-shareable via MPU
+- DMA buffers placed in this region don't need cache maintenance
+- Lower CPU-side throughput (every access misses cache, hits SRAM)
+- Less code; harder to forget
+- **Use when:** DMA happens continuously (sound/video buffer), or junior team
+
+```c
+/* Strategy B setup — call BEFORE SCB_EnableDCache() in main() */
+void MPU_ConfigDMARegion(void)
+{
+    MPU_Region_InitTypeDef cfg = {0};
+
+    HAL_MPU_Disable();
+
+    /* Region 0: AXI SRAM as Normal Cacheable Writeback (default behavior
+     * — explicitly re-state so following regions are deltas) */
+    cfg.Enable           = MPU_REGION_ENABLE;
+    cfg.Number           = MPU_REGION_NUMBER0;
+    cfg.BaseAddress      = 0x24000000;
+    cfg.Size             = MPU_REGION_SIZE_512KB;
+    cfg.AccessPermission = MPU_REGION_FULL_ACCESS;
+    cfg.DisableExec      = MPU_INSTRUCTION_ACCESS_ENABLE;
+    cfg.IsShareable      = MPU_ACCESS_NOT_SHAREABLE;
+    cfg.IsCacheable      = MPU_ACCESS_CACHEABLE;
+    cfg.IsBufferable     = MPU_ACCESS_BUFFERABLE;
+    cfg.TypeExtField     = MPU_TEX_LEVEL1;
+    HAL_MPU_ConfigRegion(&cfg);
+
+    /* Region 1: DMA buffer slice as Normal Non-Cacheable + Shareable
+     * This OVERLAPS Region 0 — higher region number wins.
+     * Address must be aligned to size (here 32 KB → 0x8000 aligned). */
+    cfg.Number           = MPU_REGION_NUMBER1;
+    cfg.BaseAddress      = 0x24048000;          /* aligned to 32 KB */
+    cfg.Size             = MPU_REGION_SIZE_32KB;
+    cfg.DisableExec      = MPU_INSTRUCTION_ACCESS_DISABLE;
+    cfg.IsShareable      = MPU_ACCESS_SHAREABLE;
+    cfg.IsCacheable      = MPU_ACCESS_NOT_CACHEABLE;
+    cfg.IsBufferable     = MPU_ACCESS_NOT_BUFFERABLE;
+    cfg.TypeExtField     = MPU_TEX_LEVEL0;
+    HAL_MPU_ConfigRegion(&cfg);
+
+    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+}
+```
+
+```ld
+/* Linker: place .dma_buffer in the MPU-marked region */
+.dma_buffer 0x24048000 (NOLOAD) :
+{
+    . = ALIGN(32);
+    *(.dma_buffer)
+    . = ALIGN(32);
+} >RAM_AXI
+```
+
+```c
+/* Now use without cache maintenance */
+__attribute__((section(".dma_buffer"), aligned(32)))
+static uint8_t dma_rx[2048];
+
+void start_dma(void)
+{
+    /* No SCB_Clean / SCB_Invalidate needed — region is non-cacheable */
+    HAL_UART_Receive_DMA(&huart1, dma_rx, sizeof(dma_rx));
+}
+```
+
+### MPU Region Sizing Gotcha — Must Be Power-of-2 + Aligned
+
+ARMv7-M MPU regions have **two constraints** that cause silent
+mis-configuration:
+
+1. **Size must be a power of 2** — `MPU_REGION_SIZE_32KB`, `_64KB`, `_128KB` etc.
+2. **Base address must be aligned to size** — a 32 KB region at `0x24000000`
+   is valid; the same region at `0x24010000` is valid; at `0x24008000` is **NOT**
+   (not multiple of `0x8000`).
+
+The MPU silently ignores misaligned base — the region appears disabled when
+you read it back. Always verify post-config:
+
+```c
+HAL_MPU_ConfigRegion(&cfg);
+
+/* Verify it actually took effect */
+MPU->RNR = 1;                   /* select region 1 */
+uint32_t rbar = MPU->RBAR;
+uint32_t rasr = MPU->RASR;
+if (!(rasr & MPU_RASR_ENABLE_Msk)) {
+    /* config rejected — usually alignment fault */
+    Error_Handler();
+}
+```
+
+### Write Buffer Drain — Why `__DSB()` Is Required After Cache Maintenance
+
+M7 has a **write-back / write-allocate D-cache** with a write buffer between
+cache and bus. `SCB_CleanDCache_by_Addr()` flushes cache lines into the write
+buffer, but does **NOT** wait for the bus transaction to complete.
+
+```c
+/* WRONG — DMA may start before cache write reaches SRAM */
+memcpy(tx_buf, data, len);
+SCB_CleanDCache_by_Addr((uint32_t *)tx_buf, ALIGN_UP(len, 32));
+HAL_SPI_Transmit_DMA(&hspi, tx_buf, len);   /* race! */
+
+/* CORRECT — DSB drains write buffer before DMA reads tx_buf */
+memcpy(tx_buf, data, len);
+SCB_CleanDCache_by_Addr((uint32_t *)tx_buf, ALIGN_UP(len, 32));
+__DSB();                                     /* wait for bus drain */
+HAL_SPI_Transmit_DMA(&hspi, tx_buf, len);
+```
+
+Symptom of missing `__DSB()`: first DMA transaction after boot transmits
+stale (pre-`memcpy`) data; subsequent transactions work because the buffer
+happens to still be coherent. Intermittent — hardest debug.
+
+Per AN209 §"Fault handling considerations for ARM Cortex-M7": "software
+code for cache maintenance operations must use memory barrier instructions,
+such as DSB, on completion, so that the fault event can be observed
+immediately."
+
+### Async BusFault from Cache Maintenance — Diagnosing via ABFSR
+
+If `SCB_CleanDCache_by_Addr` operates on an address range that includes
+unmapped or strongly-ordered memory, M7 fires an **async (imprecise) BusFault**.
+The stacked PC will NOT point at the SCB write — it'll point at whatever the
+CPU was executing when the async fault surfaced.
+
+Use ABFSR (`0xE000ED3C`) to identify which bus interface failed:
+
+```c
+void BusFault_Handler_C(uint32_t *sf)
+{
+    uint32_t cfsr  = SCB->CFSR;
+    uint32_t abfsr = *(volatile uint32_t *)0xE000ED3C;   /* M7 only */
+
+    if (cfsr & (1 << 10)) {  /* IMPRECISERR */
+        if (abfsr & (1 << 3))  log("Async fault on AXIM (external mem/peripheral)");
+        if (abfsr & (1 << 2))  log("Async fault on AHBP (APB peripherals)");
+        if (abfsr & (1 << 1))  log("Async fault on DTCM (rare — CPU-only normally)");
+        if (abfsr & (1 << 0))  log("Async fault on ITCM");
+        if (abfsr & (1 << 4))  log("Async fault on EPPB");
+        log("Stacked PC is UNRELIABLE for this fault — do not trust it");
+    }
+
+    *(volatile uint32_t *)0xE000ED3C = abfsr;   /* W1C to clear */
+}
+```
+
+Full register decode → [ref-fault-handlers.md](ref-fault-handlers.md) §"ABFSR".
+
 ---
 
 ## Kategori 4: LTO (Link Time Optimization) Tuzakları

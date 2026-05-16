@@ -303,3 +303,225 @@ Factory programming sequence (order matters):
 | Public key in `.rodata` without WRP | Attacker can replace key | WRP-protect boot sector containing key |
 | Anti-rollback OTP in user flash | Can be erased | Use hardware OTP fuses |
 | OTFDEC key in source code | Key exposure | Factory provisioned, never in source |
+
+---
+
+## BL→App Runtime Chain Verification
+
+Static option-byte protections (RDP/WRP/PCROP) protect against **read-back** of
+the App image. They do NOT protect against:
+
+- Field-OTA-installed apps that have valid format but malicious payload
+- Replay of an older signed app to bypass a security patch
+- Bit-flip / aging corruption of the app image between flash writes
+- A bootloader compromise that swaps the public key
+
+The **BL→App runtime chain** verifies the app image on every boot, against
+keys/manifest that the bootloader holds in regions outside the app's reach.
+
+### Chain Anatomy
+
+```
+   ┌──────────────────────────────────────────────────────────────┐
+   │  ROOT OF TRUST (ROT)                                         │
+   │   - Lives in WRP+PCROP region                                │
+   │   - Contains OEM-Pub-Key (ECDSA P-256)                       │
+   │   - On H5/U5: lives in OBK area, RSS-managed (immutable)     │
+   │   - On H7/F4/L4/G4: lives in flash sector 0, WRP-locked      │
+   └──────────────────────────────────┬───────────────────────────┘
+                                      │  signs
+                                      ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  BOOTLOADER MANIFEST (BLM)                                   │
+   │   - {app_address, app_length, app_hash, app_version,         │
+   │      signature_over_above_with_OEM_Priv}                     │
+   │   - Lives in dedicated flash sector, WRP-locked              │
+   │   - On OTA install: BL writes new BLM after verifying        │
+   │     candidate signature                                      │
+   └──────────────────────────────────┬───────────────────────────┘
+                                      │  describes
+                                      ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  APPLICATION IMAGE                                           │
+   │   - At app_address, length app_length                        │
+   │   - On boot: BL computes SHA-256 of image, compares to       │
+   │     BLM.app_hash                                             │
+   │   - Mismatch → fall back to last-known-good slot, or brick   │
+   │     to a fail-safe loop                                      │
+   └──────────────────────────────────────────────────────────────┘
+```
+
+### Boot-Time Verification — pseudo-code
+
+```c
+/* Bootloader entry — runs at every reset, before app */
+
+#include "psa/crypto.h"   /* or mbedtls equivalent */
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;           /* 'BLM1' */
+    uint32_t app_address;
+    uint32_t app_length;
+    uint8_t  app_hash[32];    /* SHA-256 */
+    uint32_t app_version;     /* anti-rollback comparison */
+    uint8_t  reserved[32];
+    uint8_t  signature[64];   /* ECDSA P-256 over above (excluding this field) */
+} BLM_t;
+
+extern const BLM_t   __blm;            /* linker-placed in WRP region */
+extern const uint8_t __oem_pub_key[];  /* PCROP region */
+
+int verify_app_chain(void)
+{
+    /* Step 1: Magic check (fast fail) */
+    if (__blm.magic != 0x424C4D31) return -1;
+
+    /* Step 2: Verify signature on BLM with OEM-Pub-Key */
+    psa_status_t st = psa_verify_message(
+        OEM_PUB_KEY_ID,
+        PSA_ALG_ECDSA(PSA_ALG_SHA_256),
+        (const uint8_t *)&__blm, offsetof(BLM_t, signature),
+        __blm.signature, sizeof(__blm.signature));
+    if (st != PSA_SUCCESS) return -2;
+
+    /* Step 3: Anti-rollback — app_version must be ≥ last-booted version */
+    uint32_t last_version = anti_rollback_read();   /* from OTP or sticky reg */
+    if (__blm.app_version < last_version) return -3;
+
+    /* Step 4: Recompute hash of app image, compare */
+    uint8_t hash[32];
+    sha256_compute((const void *)__blm.app_address, __blm.app_length, hash);
+    if (memcmp(hash, __blm.app_hash, 32) != 0) return -4;
+
+    /* Step 5: Anti-rollback latch — record this version as last-booted */
+    if (__blm.app_version > last_version) {
+        anti_rollback_write(__blm.app_version);
+    }
+
+    return 0;  /* OK — proceed to jump */
+}
+
+int main(void)
+{
+    SystemInit_BL();
+    int rc = verify_app_chain();
+    if (rc != 0) {
+        log_failure(rc);
+        /* Two strategies — pick one per product policy: */
+        /* (A) Fall back to slot B (A/B firmware scheme) — see ref-iap-ota.md */
+        /* (B) Enter a "brick" loop that only USB-DFU or signed UART can recover */
+        recovery_loop();
+    }
+    jump_to_app((void (*)(void))__blm.app_address);
+}
+```
+
+### Anti-Rollback Storage Options
+
+| Storage | Update mechanism | Erasable? | Quantity |
+|---------|------------------|-----------|----------|
+| **OTP fuses** (option-byte BFB2, USER0/USER1) | One-time bit-set | No | Limited bits |
+| **STM32H5/U5 NV-counter (RSS)** | RSS service call | No (monotonic) | 16-32 counter |
+| **Backup register + RTC** | Runtime write | Yes (loss on VBAT fail) | Many |
+| **Flash sector with monotonic encoding** | Bit-set 1→0 only (physics); encode counter as bit-mask | No (within sector) | ~ 8192 increments per KB |
+
+**Recommended:** OTP fuses on parts that have them (limited but secure); RSS
+NV-counter on H5/U5; monotonic-flash-bitmask on parts without either. Backup
+register alone is **insufficient** — battery-removal attack defeats it.
+
+### A/B Slot Scheme — Rollback-Safe OTA
+
+Two app slots, BL tracks which slot is "stable" and which is "candidate":
+
+```c
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t stable_slot;        /* 0 or 1 */
+    uint32_t candidate_slot;     /* 0 or 1 (≠ stable normally) */
+    uint32_t candidate_boots;    /* incremented each boot of candidate */
+    uint32_t candidate_max;      /* if boots ≥ max without "I_AM_OK" confirm,
+                                    revert to stable */
+} OTA_State_t;
+
+/* Boot decision tree:
+ *
+ *   if OTA_State.candidate_slot is valid AND boots < max:
+ *       try boot candidate, increment boots
+ *       app must call ota_confirm() in first N seconds → resets boots, swap stable/candidate
+ *   if candidate fails verify OR boots ≥ max:
+ *       fall back to stable_slot
+ *   if stable_slot also fails verify:
+ *       recovery_loop (USB-DFU only)
+ */
+```
+
+**Why "boots ≥ max":** the new firmware might pass signature verification but
+crash before completing init, causing reboot loops. Counter forces revert
+after a fixed number of attempts.
+
+See [ref-iap-ota.md](ref-iap-ota.md) for the linker-script and flash-bank-swap
+details on parts with dual-bank flash.
+
+### HDP Latch Integration (H5/U5/L5/WBA)
+
+After signature verification succeeds, **before jumping to app**, latch
+HDP so the bootloader code (containing the public key and the verification
+routine) becomes unreadable from app context:
+
+```c
+/* H5/U5/L5/WBA — latch HDP region 1 (covers bootloader flash) */
+FLASH->SECHDPCR |= FLASH_SECHDPCR_HDP1_ACCDIS;
+__DSB();
+__ISB();
+jump_to_app(__blm.app_address);
+```
+
+This means even if the application has a memory disclosure vulnerability
+(e.g., a missing bounds check that leaks flash content over UART), the
+attacker reads zeros for the bootloader region. The OEM public key and the
+verification code are mathematically present but architecturally invisible.
+
+For families without HDP (H7/F4/L4/G4), the next-best is `WRP+PCROP` on the
+bootloader sector — read returns 0 from CPU, but flash is not write-protected
+from a re-flash via SWD (so RDP=1 + WRP also needed to block re-flash route).
+
+### Common BL→App Chain Mistakes
+
+1. **Verifying signature against `__oem_pub_key` that lives in App's address
+   space.** App can replace the key. Public key MUST live in BL's
+   WRP/PCROP/HDP region.
+
+2. **Computing hash over `app_length` from app's own header.** Self-referential —
+   malicious app sets `length = 100` so only the first 100 bytes hash. Always
+   use length from the BLM (signed structure outside app).
+
+3. **No anti-rollback check.** OTA downgrade is the typical bypass for a
+   newly-patched security vulnerability.
+
+4. **Forgetting to update the anti-rollback counter on FIRST successful boot
+   of a new version.** Otherwise, rolling back is trivially allowed.
+
+5. **HDP not latched, OR latched in app instead of BL.** App can read public
+   key, derive private key from any side-channel, or leak via UART debug print.
+
+6. **Single slot (no A/B), no fail-safe.** Failed OTA = bricked device.
+   Recovery requires customer return.
+
+7. **`recovery_loop()` accessible without auth.** If BL's recovery accepts
+   any signed firmware, an attacker can re-flash a malicious image. Recovery
+   MUST require the same signature chain — only the auth medium differs (USB
+   DFU vs OTA).
+
+8. **HDP latched too late** (after some Secure-context library calls back
+   into bootloader for crypto routines). The library calls fail post-latch.
+   Plan the call-graph: HDP latch comes AFTER everything the app needs to
+   call back into.
+
+### Cross-references
+
+- Key storage / OEM-Priv handling → [ref-key-provisioning.md](ref-key-provisioning.md)
+- HDP / DBGAUTH state for secure regions → [ref-secure-debug.md](ref-secure-debug.md)
+- TrustZone Secure context for RSS calls → [ref-trustzone.md](ref-trustzone.md)
+- A/B slot linker layouts and bank-swap → [ref-iap-ota.md](ref-iap-ota.md)
+- Boot order, jump pattern → [ref-bootloader.md](ref-bootloader.md)
+- Production-line verification of chain → [ref-eol-test-framework.md](ref-eol-test-framework.md)

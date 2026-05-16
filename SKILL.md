@@ -1896,7 +1896,14 @@ See [stm32-families.md](stm32-families.md) for:
 |------|----------|
 | [ref-stm32-errata.md](ref-stm32-errata.md) | Real-world errata: HAL bugs, GPIO speed, USB, DMA-DTCM, I2C hang |
 | [ref-trustzone.md](ref-trustzone.md) | TrustZone-M (H5/U5/L5): SAU, GTZC, MPCBB, CMSE, MPU stack guard |
-| [ref-secure-boot.md](ref-secure-boot.md) | RDP levels, option bytes, PCROP, ECDSA, PKA, OTFDEC, anti-rollback |
+| [ref-secure-boot.md](ref-secure-boot.md) | RDP levels, option bytes, PCROP, ECDSA, PKA, OTFDEC, anti-rollback, **BL→App runtime chain verification + A/B slots + HDP latch** |
+| [ref-key-provisioning.md](ref-key-provisioning.md) | **OEM key injection, SFI, ST33 HSM, RSS (H5/U5/WBA), lifecycle states, supply-chain checklist** |
+| [ref-secure-debug.md](ref-secure-debug.md) | **JTAG/SWD lockdown, DBGAUTH (M33), HDP regions, permission slips, debug decision tree** |
+
+### Production Test / Calibration
+| File | Contents |
+|------|----------|
+| [ref-eol-test-framework.md](ref-eol-test-framework.md) | **End-of-line test stages: BIST (March-C, flash CRC, peripheral ping), boundary-scan IEEE 1149.1, calibration storage, life-cycle lock verification, bed-of-nails checklist** |
 
 ---
 
