@@ -38,23 +38,36 @@ When this skill is invoked, **identify the mode first**, then follow the matchin
 | Mode | Trigger | Procedure | Output shape | Max length |
 |------|---------|-----------|--------------|------------|
 | **A. Quick Q&A** | Single-question (≤2 lines), no code attached | Answer directly. No graphify, no checklist. | Plain answer | ≤5 lines |
-| **B. Review existing code** | User pastes/points to code | (1) Detect MCU + family (2) Errata cross-check (3) Graphify if ≥3 `.c` files (4) Use Finding Template | Findings list | ≤8 findings inline; use template for ≥1 file |
+| **B. Review existing code** | User pastes/points to a small file or snippet (<200 LOC, single peripheral) | (1) Detect MCU + family (2) Errata cross-check (3) Skip graphify (4) Use Finding Template | Findings list | ≤8 findings inline |
+| **B+. Deep Project Review** | "Analyze my project", "Is there a bug here?", "Review this repo", project directory pointed to | **9-phase reference-benchmarked pipeline below** — DO NOT skip any phase | Findings with confidence + reference citations | Until pipeline complete |
 | **C. Implement new feature** | "Write a driver for...", "Add OTA..." | (1) Context interview if ambiguous (2) 5-phase summary (3) Code with errata notes inline | Code + 5-phase summary | ≤30 lines summary + code |
 | **D. Debug** | "Why does X not work?", "HardFault at ..." | (1) Ask for fault dump / debug info (2) Decode CFSR/BFAR (3) Walk root cause | Q&A + decoded fields | Until root cause found |
 
-### Mandatory Finding Template (Mode B + D)
+### Mandatory Finding Template (Mode B / B+ / D)
 
 Every issue you flag MUST use this exact shape — never prose paragraphs:
 
 ```
-[SEVERITY] file.c:LINE — CATEGORY
-  what:  one sentence describing the bug
-  why:   one sentence explaining failure mode (what breaks at runtime / on which silicon)
-  fix:   one sentence — concrete change, with RM/spec citation if applicable
+[SEVERITY] [CONFIDENCE] file.c:LINE — CATEGORY
+  what:   one sentence describing the bug
+  why:    one sentence explaining failure mode (what breaks at runtime / on which silicon)
+  fix:    one sentence — concrete change, with patch hint if obvious
+  ref:    canonical source (ST repo path / RM section / spec / AN)
   errata: [ES0480 §2.3.1] if applicable, else omit
 ```
 
-Severity codes: `CRITICAL` (data loss / silent corruption / compile fail), `HIGH` (functional bug), `MEDIUM` (maintainability / latent), `LOW` (style).
+Severity codes:
+- `CRITICAL` — data loss / silent corruption / compile fail / safety-of-life
+- `HIGH`     — functional bug, reproducible
+- `MEDIUM`   — latent / maintainability
+- `LOW`      — style
+
+Confidence codes (from B1 — multi-source verification):
+- `HIGH-CONF` — verified against ≥2 authoritative sources (ST repo + AN, or RM + ARM ARM, or errata + reproduction)
+- `MED-CONF`  — single authoritative source
+- `LOW-CONF`  — heuristic / pattern-based, not directly verified
+
+**Rule:** A `CRITICAL` finding with `LOW-CONF` must be marked clearly — do not assert it as certain. If only LOW-CONF available for a critical issue, frame as "candidate / requires verification".
 
 ### Decision Tree on Invocation
 
@@ -89,6 +102,348 @@ User request
 ### Response language
 
 Respond in the user's language. Reference files may mix Turkish/English — translate quoted terms inline if needed. Never code-switch within a single sentence.
+
+---
+
+## 🔬 Mode B+ — Deep Reference-Benchmarked Project Review
+
+This is THE pipeline for any "analyze my project" / "is there a bug?" /
+"review this repo" request. It compares the user's code against ST's
+canonical reference implementations to find MCU-interface deviations.
+
+**Why this exists:** Memorized HAL knowledge drifts; manual line-by-line
+review misses cross-cutting init-order bugs. By generating a call-graph
+of the user's code and a call-graph of ST's canonical example for the
+same MCU, then diffing the two on the HAL/LL/BSP/SCB surface, we find
+divergences from authoritative patterns — those are bug candidates.
+
+**Premium accuracy contract:** This pipeline does NOT have an MVP /
+"skip-some-phases" mode. The phases are minimum-viable for a trustworthy
+bug-hunt output. Phases are tested step-by-step but never dropped.
+
+### Pipeline Overview (9 phases)
+
+```
+[Faz 0] Mode B+ tetiklendi mi?
+   ↓
+[Faz 1] MCU + Toolchain Tespiti  (otomatik, .ioc/.uvprojx/startup'tan)
+   ↓
+[Faz 1.5] PROJECT PURPOSE UNDERSTANDING ★  (anla — anlamadıysan SOR)
+   ↓
+[Faz 2] Errata + AN Context     (workaround'ları "expected divergence" listesine al)
+   ↓
+[Faz 3] Reference Acquisition   (sparse clone — sadece ilgili STM32Cube alt-ağacı)
+   ↓
+[Faz 4] Reference Graph          (graphify on canonical examples)
+   ↓
+[Faz 5] User Graph + Side Checks  (paralel: A2 CubeMX-diff, A3 memory-map, A4 concurrency)
+   ↓
+[Faz 6] Benchmark + Confidence Scoring
+   ↓
+[Faz 7] Divergence Triage        (MCU-interface vs business-logic ayrımı)
+   ↓
+[Faz 8] Manual Verification + Final Findings (template + citations)
+```
+
+### Faz 0 — Mode B+ Tetik Şartları
+
+Aşağıdakilerden HERHANGİ BİRİ → B+:
+- Kullanıcı bir dizin/repo işaret etti (tek dosya değil)
+- "projemi analiz et", "kodumda sorun var mı", "review this repo"
+- ≥3 `.c` dosyası söz konusu
+- "yarın production'a giriyor / kritik kod" gibi söz
+
+Tek dosya snippet ya da "şu fonksiyona bak" → Mode B (kısa), B+ değil.
+
+### Faz 1 — MCU + Toolchain Tespiti
+
+Sıralı arama (kullanıcıya SORMADAN ÖNCE bunları dene):
+
+```bash
+# 1. .ioc dosyası — en güvenilir
+find <project> -name '*.ioc' -maxdepth 3 -exec grep -m1 'Mcu.Name=\|ProjectManager.ProjectName=' {} \;
+
+# 2. Keil project files
+find <project> -name '*.uvprojx' -maxdepth 4 -exec grep -m1 '<Device>' {} \;
+
+# 3. Startup file → part number
+find <project> -name 'startup_stm32*.s' -maxdepth 4 | head -3
+
+# 4. Top-level main.c → which stm32xxxx.h is included
+grep -m1 '#include "stm32' <project>/Core/Src/main.c 2>/dev/null \
+  || grep -rm1 '#include "stm32' <project> --include='main.c' | head -3
+
+# 5. Toolchain — .uvprojx <Cads> compiler tag, or .cproject for CubeIDE, or Makefile CC=
+grep -h 'arm-none-eabi-gcc\|armclang\|armcc' <project>/Makefile <project>/**/Makefile 2>/dev/null
+```
+
+Sonuç **part-number granülarite** olmalı (`STM32H730VBT6`, sadece "H7" yetmez).
+Belirleyemezsen → kullanıcıya sor: "MCU part-number ve silikon revizyonu (rev V/Y/X)?"
+
+### Faz 1.5 — Project Purpose Understanding ★
+
+**THE GOLDEN RULE:** Tek bir satır kod analiz etmeden ÖNCE, projenin ne yaptığını anlamalısın. Anlamadıysan **DURDUR ve KULLANICIYA SOR.** Tahmin etme.
+
+**Procedure:**
+
+```
+1. Top-level dokümanları oku:
+   - README.md  / README.* (varsa)
+   - docs/ klasörü (varsa)
+   - .gitignore (tooling ipucu için)
+
+2. Build/proje konfigürasyonu:
+   - .ioc dosyası → ProjectManager.ProjectName, "title" alanları
+   - .uvprojx → ProjectName, OutputName
+   - Top-level main.c başındaki yorum bloğu
+
+3. Uygulama yüzeyi:
+   - Core/Src/main.c veya app_main.c → açılış akışı
+   - RTOS task fonksiyon adları (task'lar genelde modülün adıyla isimlendirilir)
+   - Klasör adları: Modbus/ BMS/ Motor/ Drivers/Custom/ BLE/ → domain ipucu
+
+4. Bağımlılıklar:
+   - Middlewares/ altında ne var? (FreeRTOS, FatFs, LwIP, USB, BLE)
+   - X-CUBE-* paketleri kullanılıyor mu?
+   - Custom HAL wrapper'ları var mı?
+
+5. Hardware ipuçları:
+   - .ioc'deki etkin peripheraller (USART, FDCAN, OSPI, ETH, ADC)
+   - GPIO label'ları (`LED_STATUS`, `BMS_INTR`, `MOTOR_PWM_A` gibi)
+```
+
+**Çıktı — bir paragraflık özet üret:**
+
+> Bu proje bir **[tip: bootloader / application / gateway / motor controller / sensor node / ECU]**,
+> domain: **[automotive / industrial / consumer / instrumentation]**,
+> stack: **[bare-metal / FreeRTOS / RTX5]**,
+> ana fonksiyonlar: **[liste]**.
+> Hardware: **[MCU + key peripherals]**.
+> **Güvenim: HIGH / MEDIUM / LOW.**
+
+**Güven değerlendirmesi:**
+- **HIGH** → README + .ioc + main.c açıkça aynı şeyi söylüyor. Devam et.
+- **MEDIUM** → Domain belli ama bir detay eksik (örn. "bootloader olduğu net ama OTA target framework belirsiz"). Devam et **ama** Faz 2'de eksiği context interview ile çöz.
+- **LOW** → Belirsizlik var. **DUR.** Kullanıcıya sor:
+  ```
+  Bu projeyi analiz etmeden önce ne yaptığını netleştirmek istiyorum:
+    - [Spesifik soru 1: tip / domain / target]
+    - [Spesifik soru 2: ana fonksiyonlar]
+    - [Spesifik soru 3: kim için, hangi ortamda çalışacak]
+  
+  Şu an emin olduklarım: [...]
+  Anlamadıklarım: [...]
+  ```
+  Cevap gelmeden Faz 2'ye GEÇME.
+
+**Neden bu kadar katı?** Domain anlamadan kanonik referans seçemezsin (bir motor controller'a bootloader referansı götürmek anlamsız), business-logic divergence'larını MCU-interface bug'larından ayıramazsın.
+
+### Faz 2 — Errata + AN Context (A1)
+
+Workaround'lar referansta var ama kullanıcıda yok → yanlış flag.
+Tersi: kullanıcıda var, referansta yok → false positive.
+**Çözüm:** "Beklenen divergence" listesi.
+
+```bash
+mkdir -p .claude-cache
+# 1. Errata listesi (CLAUDE.md tablosundan MCU → ES sheet eşleştir)
+#    Örn: STM32H730 → ES0480
+# 2. Önce ref-stm32-errata.md'den ilgili bölümleri çıkar
+# 3. Online errata PDF'i fetch et (eğer skill'de yoksa veya stale ise)
+#    WebFetch: https://www.st.com/resource/en/errata_sheet/es<N>.pdf
+# 4. İlgili AN'leri belirle: AN5312 (H7 ODEN), AN5050 (DLYB), AN4861 (dual-bank),
+#    AN2606 (system bootloader addresses), AN5347 (TrustZone)
+```
+
+Çıktı: `.claude-cache/errata-context.md` — bu MCU için "expected workarounds" listesi.
+
+### Faz 3 — Reference Acquisition (sparse clone)
+
+Tüm STM32Cube klonlamak ~2 GB. Sadece **MCU-uygun** kısımları çek:
+
+```bash
+# Adım A: Hangi referans projelerin uygun olduğunu keşfet
+gh search code "STM32<part>" --owner=STMicroelectronics --filename='main.c' \
+    --json repository,path > .claude-cache/refs-discovery.json
+
+# Adım B: Pin-compatible / silikon-yakın board'ları belirle
+#   H730 → H735G-DK (ExtMem_CodeExecution), H750B-DK (QSPI/FMC)
+#   H7A3 → STM32H7B3I-EVAL
+#   H5   → NUCLEO-H563ZI / STM32H573I-DK
+#   ... (ref-st-github-map.md tablo §3'e bak)
+
+# Adım C: Sparse clone — sadece ilgili Projects + Drivers
+mkdir -p .claude-cache/refs/STM32CubeH7
+cd .claude-cache/refs/STM32CubeH7
+git clone --filter=blob:none --sparse --depth=1 \
+    https://github.com/STMicroelectronics/STM32CubeH7.git .
+git sparse-checkout set \
+    Projects/STM32H735G-DK/Applications/ExtMem_CodeExecution \
+    Projects/STM32H750B-DK/Examples \
+    Drivers/STM32H7xx_HAL_Driver \
+    Drivers/CMSIS/Device/ST/STM32H7xx
+
+# Adım D: Reference SHA pinle (B4)
+git rev-parse HEAD > .claude-cache/refs/STM32CubeH7/.pinned-sha
+```
+
+Çıktı: `.claude-cache/refs/` ~50-200 MB; her referansta `.pinned-sha`.
+
+### Faz 4 — Reference Graph (canonical patterns)
+
+```bash
+# Vendor isimlerini SIGNAL olarak tut (Mode B'deki filter'ın TERSİ)
+graphify .claude-cache/refs --no-viz \
+    --include-pattern='HAL_*|LL_*|BSP_*|SCB_*|__NVIC_*|__HAL_RCC_*' \
+    --out .claude-cache/refs-graph.json
+```
+
+Çıktı: ST'nin kanonik HAL/LL kullanım örüntüsü.
+
+### Faz 5 — User Graph + 3 Yan Kontrol (A2 + A3 + A4)
+
+**Paralel olarak çalıştır:**
+
+#### 5.0 User MCU-interface graph
+```bash
+graphify <user-project> --no-viz \
+    --include-pattern='HAL_*|LL_*|BSP_*|SCB_*|__NVIC_*|__HAL_RCC_*' \
+    --out graphify-out/user-graph-mcu.json
+
+# Full graph da kaydet (Faz 8 manuel review için)
+graphify <user-project> --no-viz --out graphify-out/user-graph-full.json
+```
+
+#### 5.A2 — CubeMX Regen + Diff (sadece .ioc varsa)
+```bash
+# Sandbox kopyaya regen at, kullanıcı koduyla diff'le
+mkdir -p .claude-cache/cubemx-sandbox
+cp <user-project>/*.ioc .claude-cache/cubemx-sandbox/
+cd .claude-cache/cubemx-sandbox
+# MCP tool: cubemx_generate(ioc_path)  veya  STM32CubeMX-CLI -s gen.script
+# Sonra:
+diff -u .claude-cache/cubemx-sandbox/Core/Src/*.c <user-project>/Core/Src/*.c > drift.diff
+```
+Her drift satırı → candidate finding.
+
+#### 5.A3 — Linker / Memory Map Validation
+```bash
+# Kullanıcının .ld veya .sct dosyasını parse et
+# MCU part'ından beklenen memory map'i çek (cmsis-device-h7/.../partition_*.h
+# veya STM32_open_pin_data/mcu/<part>.xml)
+# Karşılaştır:
+#   - ORIGIN/LENGTH each region
+#   - DMA-incapable bölgelerde DMA buffer placement (DTCM!)
+#   - Stack/heap sizes vs task count
+```
+
+#### 5.A4 — Shared Variable / Concurrency Analysis
+```bash
+# graphify ile ISR ve task arasında paylaşılan değişken bul
+graphify query "shared variables between ISR handlers and tasks" \
+    --graph graphify-out/user-graph-full.json
+
+# Her shared var için doğrula:
+#   - `volatile` qualifier var mı?
+#   - size > 4 byte mı?  → atomic değil → kritik bölge gerek
+#   - ISR_PRIORITY ≥ configMAX_SYSCALL_INTERRUPT_PRIORITY mi?
+```
+
+### Faz 6 — Benchmark + Confidence Scoring (B1)
+
+İki graph'ı **HAL/LL/BSP yüzeyinde** karşılaştır. Her divergence için
+2-3 kaynaktan doğrulama dene:
+
+```
+For each divergence D:
+    sources_confirming = []
+    
+    # ST repo (varsa)
+    if D pattern matches canonical ST example:
+        sources_confirming.append("ST:<path>@<sha>")
+    
+    # AN (varsa)
+    if D matches a documented AN procedure:
+        sources_confirming.append("AN<N> §<section>")
+    
+    # RM (register-level claims için)
+    if D claims a register bit position / mode:
+        # gh api fetch RM via cmsis SVD or AN cross-ref
+        sources_confirming.append("RM<NNNN> §<section>")
+    
+    # ARM ARM (core-level: cache, NVIC, MPU, SAU)
+    if D involves Cortex-M core feature:
+        sources_confirming.append("ARMv7-M ARM §X" or "ARMv8-M ARM §X")
+    
+    # Errata
+    if D in errata-context.md:
+        sources_confirming.append("ES<N> §<x.y>")
+    
+    # Confidence:
+    if len(sources_confirming) >= 2: HIGH-CONF
+    elif len(sources_confirming) == 1: MED-CONF
+    else: LOW-CONF  (heuristic only — mark in finding)
+```
+
+### Faz 7 — Divergence Triage (MCU-interface vs Business-logic)
+
+| Sınıf | Kriter | Aksiyon |
+|-------|--------|---------|
+| **MCU-interface mismatch** | ST API yüzeyinde (HAL/LL/BSP/SCB/__NVIC/register) | → CANDIDATE BUG, Faz 8'e gönder |
+| **Business logic difference** | Sadece kullanıcının kendi modülleri arası | → IGNORE (beklenen) |
+| **Custom HAL wrapper** | Kullanıcı HAL üzerine kendi sarmalayıcısını yazmış | → wrapper'ı ayrıca incele; wrapper'ın HAL'i doğru çağırıp çağırmadığına bak |
+| **Abstraction-level mismatch** | Kullanıcı LL, referans HAL (veya tersi) | → tek başına BUG değil; çağrı sıralaması doğru mu kontrol et |
+| **Documented errata workaround** | Faz 2 expected-list'te | → IGNORE |
+
+Faz 3+4+5 filter'ı zaten business-logic'i dışlıyor, ama wrapper/abstraction sınıfları için manuel ayırma gerek.
+
+### Faz 8 — Manual Verification + Final Findings
+
+Sadece Faz 7'den "CANDIDATE BUG" işaretli divergence'ları al. Her biri için:
+
+1. Source dosyayı aç (Read), tam context'i gör
+2. Karşılığını ST referans dosyasında aç, karşılaştır
+3. Bug muhtemel ise: Finding Template'e yaz (severity + confidence)
+4. False positive ise: kaydet ama emit etme (cache for next run)
+
+**Final output:**
+```
+PROJECT SUMMARY (Faz 1.5'ten):
+  [bir paragraf — project ne yapıyor]
+
+MCU + TOOLCHAIN:
+  STM32H730VBT6 (rev V), armclang AC6 -O3 -flto, RTX5
+
+REFERENCE BENCHMARK:
+  Compared against:
+    - STM32CubeH7@a3f2b9c:Projects/STM32H735G-DK/.../ExtMem_Boot
+    - STM32CubeH7@a3f2b9c:Projects/STM32H750B-DK/Examples/QSPI
+  Total divergences in MCU-interface surface: N
+  
+APPLIED ERRATA CONTEXT:
+  - ES0480 §2.1.1 AXIRAM (workaround verified present)
+  - AN5312 ODEN sequence (workaround MISSING → finding below)
+
+FINDINGS:
+
+[CRITICAL] [HIGH-CONF] main.c:142 — H7-CLOCK-INIT
+  what:   480 MHz hedeflenmiş ama SYSCFG_PWRCR.ODEN sequence eksik
+  why:    Rev V silikon: VOS0 yazımı yetmez, ODEN + ACTVOSRDY de gerek
+  fix:    `SYSCFG->PWRCR |= SYSCFG_PWRCR_ODEN; while(!(PWR_FLAG_ACTVOSRDY));`
+  ref:    STM32CubeH7@a3f2b9c:.../system_stm32h7xx.c:140
+  errata: AN5312 §3
+  
+[...]
+
+CONFIDENCE NOTE:
+  3 findings are LOW-CONF (heuristic) — verify manually before action.
+```
+
+### Faz 1.5 Kuralı — Bir kez daha vurgu
+
+**Project Purpose Understanding** atlanırsa **Faz 7 triage çöker**: business-logic
+divergence'ları MCU bug'ı sanırsın. Bu yüzden Faz 1.5'i ASLA atla. Eğer
+"genel olarak skill çağrıldı, proje yok" → Mode B+ değil, A/C/D kullan.
 
 ---
 
