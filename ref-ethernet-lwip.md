@@ -1,18 +1,29 @@
 # Ethernet + LwIP — STM32 (F7/H7/H5)
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 ## Hardware Requirements
 
 ```
-RMII pinout (mandatory, 7 pins):
+RMII pinout (mandatory, 7 pins) — per RM0433 §11.6 AF11 mapping
+(STM32H7). Primary pin first, alternate after; TX_EN and TXD0 are
+*different* pins — earlier docs mistakenly listed PG11 for both.
   REF_CLK (50MHz external oscillator → MCU) — PA1
   MDIO    → PA2
   MDC     → PC1
   CRS_DV  → PA7
   RXD0    → PC4
   RXD1    → PC5
-  TXD0    → PB11 (or PG11)
-  TXD1    → PB12 (or PG12)
-  TX_EN   → PB10 (or PG11)
+  TX_EN   → PB11   (alternate: PG11)
+  TXD0    → PB12   (alternate: PG13)
+  TXD1    → PB13   (alternate: PG12)
 
 GPIO speed: VERY_HIGH mandatory for all ETH pins
 GPIO pull:  NOPULL (PHY handles termination)
@@ -296,6 +307,12 @@ void tcp_server_task(void *arg)
 ```c
 void udp_broadcast_send(const uint8_t *data, uint16_t len)
 {
+    /* WARNING: udp_new/udp_sendto/udp_remove are the LwIP RAW API and are
+     * NOT thread-safe. They MUST be called only from the tcpip_thread, OR
+     * dispatched via tcpip_callback_with_block() / tcpip_try_callback().
+     * Calling from an application task corrupts the LwIP heap/PCB list and
+     * causes intermittent crashes. From application tasks use the
+     * netconn or socket API instead. */
     struct udp_pcb *pcb = udp_new();
     ip_addr_t dst;
     IP_ADDR4(&dst, 255, 255, 255, 255);

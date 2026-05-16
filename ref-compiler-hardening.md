@@ -1,5 +1,14 @@
 # Compiler Optimization — Silent Bug Prevention
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 Bu dosya: hata mesajı vermeden sessizce bozulan davranışların tüm kategorilerini ve çözümlerini kapsar.
 
 ---
@@ -174,7 +183,12 @@ SCB_InvalidateDCache_by_Addr((uint32_t *)rx_buf, (int32_t)((total + 31U) & ~31U)
 
 ```c
 /* ISR'ları LTO'dan koru */
-__attribute__((used, interrupt("IRQ")))
+/* Cortex-M ISRs use AAPCS (hardware stacks R0-R3, R12, LR, PC, xPSR
+ * automatically). The `interrupt` attribute is for ARM A/R-profile only;
+ * on Cortex-M Clang either ignores it (with warning) or emits a wrong
+ * prologue/epilogue that corrupts the stack frame. Use only `((used))`
+ * (or nothing — the symbol is referenced via the vector table). */
+__attribute__((used))
 void USART1_IRQHandler(void) { /* ... */ }
 
 /* HAL weak callback override — LTO ile bazen silinir */

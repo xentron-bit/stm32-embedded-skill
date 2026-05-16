@@ -1,5 +1,14 @@
 # Keil MDK / Arm Compiler 6 (armclang) — STM32 Specific Reference
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 Bu dosya: Keil MDK + AC6 (armclang) kombinasyonuna özgü tuzakları, scatter file yapısını, RTX5 hatalarını ve LTO davranışını kapsar.
 
 ---
@@ -9,7 +18,7 @@ Bu dosya: Keil MDK + AC6 (armclang) kombinasyonuna özgü tuzakları, scatter fi
 | Özellik | AC5 (ARMCC) | AC6 (armclang / LLVM) |
 |---------|------------|----------------------|
 | Base | Proprietary | LLVM/Clang |
-| LTO | Yoktu | `--lto` ile aktif — varsayılan kapalı, proje ayarından açılır |
+| LTO | Yoktu | `-flto` ile aktif (compiler); armlink ise `--lto` — varsayılan kapalı, proje ayarından açılır |
 | Optimizasyon | `-O0..O3` | `-O0..O3, -Oz` |
 | Weak symbol | Çoğunlukla korunur | LTO açıkken silinebilir — `__attribute__((used))` şart |
 | `volatile` | Daha hoşgörülü | Daha agresif — eksik `volatile` -O1'de bozulur |
@@ -33,7 +42,8 @@ Bu dosya: Keil MDK + AC6 (armclang) kombinasyonuna özgü tuzakları, scatter fi
 **Proje ayarı:** Options → C/C++(AC6) → Optimization Level
 
 **Öneri:** Development → `-O1`, Release → `-O2` veya `-Oz` (flash sınırlıysa)  
-LTO varsa `-O2 --lto` kombinasyonu; `-Oz --lto` FatFS/lwIP gibi büyük kütüphanelerde ciddi space kazanımı sağlar.
+LTO varsa `-O2 -flto` kombinasyonu; `-Oz -flto` FatFS/lwIP gibi büyük kütüphanelerde ciddi space kazanımı sağlar.  
+**NOT:** armclang (compiler) `-flto` (Clang-standart) flag'ini kullanır; armlink (linker) ise `--lto` — bu ikisi farklı araçların ayrı flag'leri.
 
 ---
 
@@ -92,7 +102,7 @@ void BusFault_Handler(void) { while (1) {} }
 ; Keil scatter file — vector tablosunu keep et
 LR_IROM1 0x08000000 0x00200000 {
   ER_IROM1 0x08000000 0x00200000 {
-    *.o (RESET, +First)     ; vector table — her zaman ilk
+    *.o (RESET, +FIRST)     ; vector table — her zaman ilk
     *(InRoot$$Sections)
     .ANY (+RO)
   }
@@ -129,7 +139,7 @@ STM32H7 bellek mimarisi:
 LR_IROM1 0x08000000 0x00200000 {
 
   ER_IROM1 0x08000000 0x00200000 {
-    *.o (RESET, +First)
+    *.o (RESET, +FIRST)
     *(InRoot$$Sections)
     .ANY (+RO)
   }
@@ -179,7 +189,7 @@ const osThreadAttr_t task_attr = {
 
 /* DOĞRU — statik stack, heap yok */
 static uint64_t rx_task_stack[256];   /* 64-bit aligned — RTX5 zorunluluğu */
-static osStaticThreadDef_t rx_task_cb;
+static osRtxThread_t rx_task_cb;  /* canonical RTX5 control-block type (rtx_os.h); osStaticThreadDef_t is not defined by CMSIS-RTOS2 */
 const osThreadAttr_t rx_task_attr = {
     .name       = "rx_task",
     .stack_mem  = rx_task_stack,
@@ -375,10 +385,14 @@ osThreadFlagsSet(spi_task_id, FLAG_TERMINATE);   /* DOĞRU: task kendisi çıkar
 
 ### 11. RTX_Config.h — Kritik Parametreler
 
+/* Macro names per CMSIS-RTX RTX_Config.h v5.x — the previous names
+ * (with _CHECKING/_ENABLED suffixes) are wrong and silently disable
+ * the feature. */
+
 ```c
 /* Stack overflow koruması — MUTLAKA açık olsun */
-#define OS_STACK_CHECKING          1    /* stack overflow → osRtxErrorNotify */
-#define OS_THREAD_STACK_WATERMARK  1    /* HWM tracking — osThreadGetStackSpace */
+#define OS_STACK_CHECK             1    /* stack overflow → osRtxErrorNotify */
+#define OS_STACK_WATERMARK         1    /* HWM tracking — osThreadGetStackSpace */
 
 /* Heap tamamen kapat — statik allocation zorla */
 #define OS_DYNAMIC_MEM_SIZE        0
@@ -387,8 +401,8 @@ osThreadFlagsSet(spi_task_id, FLAG_TERMINATE);   /* DOĞRU: task kendisi çıkar
 #define OS_TICK_FREQ            1000    /* 1ms tick */
 
 /* Round-robin time slice */
-#define OS_ROUND_ROBIN_ENABLED     1
-#define OS_ROUND_ROBIN_TIMEOUT    50    /* ms, aynı öncelikli task'lar arası */
+#define OS_ROBIN_ENABLE            1
+#define OS_ROBIN_TIMEOUT          50    /* ms, aynı öncelikli task'lar arası */
 
 /* ISR'dan gelen event queue boyutu */
 #define OS_ISR_FIFO_QUEUE         16    /* arttır: çok ISR event üretiyorsa */

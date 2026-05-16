@@ -1,5 +1,14 @@
 # Fault Handlers & Reset Cause Detection
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 ## HardFault Handler — Register Dump
 
 ```c
@@ -120,7 +129,10 @@ __attribute__((naked)) void UsageFault_Handler(void)
 | `[8]` IBUSERR | BusFault | Instruction bus error |
 | `[9]` PRECISERR | BusFault | Precise data bus error — BFAR valid |
 | `[10]` IMPRECISERR | BusFault | Imprecise bus error (async DMA) |
+| `[11]` UNSTKERR | BusFault | Unstack error (fault on exception return) |
 | `[12]` STKERR | BusFault | Fault on stacking |
+| `[13]` LSPERR | BusFault | Lazy FP stack error |
+| `[15]` BFARVALID | BusFault | BFAR holds valid address — check before reading BFAR |
 | `[16]` UNDEFINSTR | UsageFault | Undefined instruction |
 | `[17]` INVSTATE | UsageFault | Invalid EPSR.T/IT state |
 | `[18]` INVPC | UsageFault | Invalid EXC_RETURN |
@@ -189,6 +201,11 @@ extern ResetCause_t reset_cause;
 /* reset_cause.c — call BEFORE HAL_Init to preserve RCC->CSR */
 ResetCause_t reset_cause;
 
+/* RCC reset-flag register name differs by family:
+ *   F4/F7/G4/L4: RCC->CSR, flags RCC_CSR_<event>RSTF (e.g., IWDGRSTF)
+ *   H7:         RCC->RSR, flags RCC_RSR_<event>RSTF (e.g., IWDG1RSTF)
+ *   H5/U5:      RCC->RSR, flags RCC_RSR_<event>RSTF
+ * On H7 wrong register name silently returns 0. Check `#if defined(STM32H7)` etc. */
 void reset_cause_detect(void)
 {
     uint32_t csr = RCC->CSR;
@@ -200,10 +217,10 @@ void reset_cause_detect(void)
     else if (csr & RCC_CSR_IWDGRSTF)   reset_cause = RESET_CAUSE_IWDG;
     else if (csr & RCC_CSR_WWDGRSTF)   reset_cause = RESET_CAUSE_WWDG;
     else if (csr & RCC_CSR_SFTRSTF)    reset_cause = RESET_CAUSE_SOFTWARE;
+    else if (csr & RCC_CSR_PORRSTF)    reset_cause = RESET_CAUSE_POWER_ON;  /* check POR before PIN — POR also sets PINRSTF on most families */
     else if (csr & RCC_CSR_PINRSTF)    reset_cause = RESET_CAUSE_PIN;
     else if (csr & RCC_CSR_BORRSTF)    reset_cause = RESET_CAUSE_BOR;
     else if (csr & RCC_CSR_LPWRRSTF)   reset_cause = RESET_CAUSE_LOW_POWER;
-    else if (csr & RCC_CSR_PORRSTF)    reset_cause = RESET_CAUSE_POWER_ON;
     else                               reset_cause = RESET_CAUSE_UNKNOWN;
 }
 ```

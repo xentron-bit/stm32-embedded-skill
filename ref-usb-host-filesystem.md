@@ -1,5 +1,14 @@
 # USB Host + File System Reference — STM32
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 Covers: USB Host MSC (TinyUSB), FatFS (SDMMC + USB MSC), LittleFS (internal flash), RTOS-safe file I/O.  
 Targets: H7, H7RS, U5, F7, L4 with USB HS/FS OTG peripheral.
 
@@ -45,7 +54,7 @@ target_include_directories(firmware PRIVATE
 target_sources(firmware PRIVATE
     tinyusb/src/tusb.c
     tinyusb/src/host/usbh.c
-    tinyusb/src/class/msc/msh_host.c
+    tinyusb/src/class/msc/msc_host.c
     # Board port for STM32:
     tinyusb/src/portable/synopsys/dwc2/hcd_dwc2.c
 )
@@ -124,6 +133,13 @@ void tuh_msc_mount_cb(uint8_t dev_addr)
     /* Associate dev_addr with FatFS drive */
     disk_set_dev_addr(pdrv, dev_addr);
 
+    /* WARNING: FATFS object must be STATIC or globally allocated — NOT on
+     * the stack. FatFS retains an internal pointer to it after f_mount();
+     * when the callback returns, the stack frame is destroyed and the
+     * next f_open() dereferences a dangling pointer (HardFault or worse).
+     * Move `FATFS fs;` to file scope: `static FATFS fs;`. Also avoid
+     * calling f_mount from a USB host callback (typically ISR/task context
+     * with mutex restrictions) — defer to an application task. */
     FATFS fs;
     FRESULT fr = f_mount(&fs, "0:", 1);  /* mount immediately */
     if (fr != FR_OK) {
@@ -163,6 +179,12 @@ DSTATUS disk_initialize(BYTE pdrv) { return disk_status(pdrv); }
 DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
 {
     /* TinyUSB MSC read — blocking */
+    /* WARNING: tuh_msc_read10() returns bool indicating ONLY whether the
+     * transfer was QUEUED — not whether it completed. Using its return value
+     * directly here makes FatFS read stale buffer contents (TinyUSB is async).
+     * Correct pattern: queue request, wait on a semaphore signalled by the
+     * tuh_msc_read10_complete_cb callback, then return success.
+     * See tinyusb/examples/host/cdc_msc_hid_freertos for the canonical pattern. */
     return tuh_msc_read10(usb_dev_addr, 0, buff, sector, (uint16_t)count)
            ? RES_OK : RES_ERROR;
 }

@@ -1,5 +1,14 @@
 # ADC & Timer Reference
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 ## ADC — Calibration + Single Conversion (LL)
 
 ```c
@@ -81,11 +90,14 @@ float adc_read_temp_celsius(ADC_HandleTypeDef *hadc)
     HAL_ADC_PollForConversion(hadc, 10);
     uint32_t raw = HAL_ADC_GetValue(hadc);
 
-    /* STM32 datasheet: TS_CAL1 at 30°C, TS_CAL2 at 110°C (3V3 VDDA) */
+    /* STM32 datasheet: TS_CAL1 at 30°C, TS_CAL2 at 110°C (3V3 VDDA).
+     * NOTE: On STM32G0/L0/U5 TS_CAL2 is at 130°C (not 110°C). Always use
+     * the TEMPSENSOR_CAL{1,2}_TEMP macros from stm32xxxx_ll_adc.h —
+     * family-specific values. */
     float ts_cal1 = (float)(*TEMPSENSOR_CAL1_ADDR);
     float ts_cal2 = (float)(*TEMPSENSOR_CAL2_ADDR);
-    float slope   = (110.0f - 30.0f) / (ts_cal2 - ts_cal1);
-    return slope * ((float)raw - ts_cal1) + 30.0f;
+    float slope   = ((float)TEMPSENSOR_CAL2_TEMP - (float)TEMPSENSOR_CAL1_TEMP) / (ts_cal2 - ts_cal1);
+    return slope * ((float)raw - ts_cal1) + (float)TEMPSENSOR_CAL1_TEMP;
 }
 ```
 

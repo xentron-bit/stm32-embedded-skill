@@ -1,5 +1,14 @@
 # RTOS Patterns Reference
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 ## FreeRTOS — Periodic Task (precise timing)
 
 ```c
@@ -452,8 +461,11 @@ bool I2C_SafeWrite(uint8_t addr, uint8_t *data, size_t len)
 ### RTX5 Static Thread (no heap)
 
 ```c
+/* NOTE: `osRtxThread_t` is the canonical RTX5 control-block type (from
+ * rtx_os.h). The name `osStaticThreadDef_t` is NOT defined by CMSIS-RTOS2
+ * and previous docs using it were wrong. */
 static uint64_t ctrl_stack[256];        // 64-bit aligned, 2KB
-static osStaticThreadDef_t ctrl_cb;
+static osRtxThread_t ctrl_cb;
 const osThreadAttr_t ctrl_attr = {
     .name       = "ctrl",
     .stack_mem  = ctrl_stack,
@@ -907,7 +919,7 @@ osKernelProtect(1U);            // threads below class 1 cannot call kernel
 
 // Strategy 3: Static — zero runtime allocation risk (required for safety)
 static uint64_t thread_stack[512];     // 4KB, 8-byte aligned
-static osStaticThreadDef_t thread_cb;  // control block storage
+static osRtxThread_t thread_cb;  // control block storage (canonical type from rtx_os.h)
 const osThreadAttr_t attr = {
     .cb_mem     = &thread_cb,
     .cb_size    = sizeof(thread_cb),
@@ -931,6 +943,6 @@ const osThreadAttr_t attr = {
 
 5. **RTX5 library vs source:** The pre-built library (`RTX_CM7.lib`) does not support `OS_SAFETY_FEATURES`. If you need `osThreadFeedWatchdog`, `osKernelProtect`, or MPU zones, you must add the RTX5 source files to your Keil project directly.
 
-6. **`osStaticThreadDef_t` size:** The static CB size must match what RTX uses internally. Use `sizeof(osStaticThreadDef_t)` — do not hardcode a byte count; it varies by RTX5 version and safety feature configuration.
+6. **`osRtxThread_t` size:** The static CB size must match what RTX uses internally. Use `sizeof(osRtxThread_t)` — do not hardcode a byte count; it varies by RTX5 version and safety feature configuration. (`osStaticThreadDef_t` is NOT a CMSIS-RTOS2 type; use `osRtxThread_t` from `rtx_os.h`.)
 
 7. **Event Recorder integration:** Enable `OS_EVR_INIT 1` and `OS_EVR_START 1` in RTX_Config.h to get RTOS-aware real-time tracing in Keil's Component Viewer. This shows thread state transitions, ISR posts, mutex contention, and stack watermarks without halting the target.

@@ -4,11 +4,6 @@
 
 ## Family Classification (ST Official)
 
-### HAL2-Based (newest generation)
-| Family | Core | Category | GitHub Cube |
-|---|---|---|---|
-| STM32C5 | Cortex-M33 | Mainstream | (coming) |
-
 ### HAL1-Based — Mainstream
 | Family | Core | Key Features | GitHub Cube | HAL Driver |
 |---|---|---|---|---|
@@ -23,10 +18,10 @@
 | Family | Core | Key Features | GitHub Cube | HAL Driver |
 |---|---|---|---|---|
 | STM32F2 | Cortex-M3  | Legacy HP, Ethernet, 120MHz | [STM32CubeF2](https://github.com/STMicroelectronics/STM32CubeF2) | [stm32f2xx-hal-driver](https://github.com/STMicroelectronics/stm32f2xx-hal-driver) |
-| STM32F4 | Cortex-M4F | Workhorse, FPU, DSP, ETH, 180MHz | [STM32CubeF4](https://github.com/STMicroelectronics/STM32CubeF4) | [stm32f4xx-hal-driver](https://github.com/STMicroelectronics/stm32f4xx-hal-driver) |
+| STM32F4 | Cortex-M4F | Workhorse, FPU, DSP, ETH (per-part: F401 84MHz; F405/407/415/417 168MHz; F411 100MHz; F412/413 100MHz; F427/429/439/446/469/479 180MHz) | [STM32CubeF4](https://github.com/STMicroelectronics/STM32CubeF4) | [stm32f4xx-hal-driver](https://github.com/STMicroelectronics/stm32f4xx-hal-driver) |
 | STM32F7 | Cortex-M7  | D-cache, I-cache, 216MHz | [STM32CubeF7](https://github.com/STMicroelectronics/STM32CubeF7) | [stm32f7xx-hal-driver](https://github.com/STMicroelectronics/stm32f7xx-hal-driver) |
 | STM32H5 | Cortex-M33 | TrustZone, FDCAN, ETH, 250MHz | [STM32CubeH5](https://github.com/STMicroelectronics/STM32CubeH5) | [stm32h5xx-hal-driver](https://github.com/STMicroelectronics/stm32h5xx-hal-driver) |
-| STM32H7 | Cortex-M7  | Dual-core option (M7+M4), 480MHz, 1MB RAM | [STM32CubeH7](https://github.com/STMicroelectronics/STM32CubeH7) | [stm32h7xx-hal-driver](https://github.com/STMicroelectronics/stm32h7xx-hal-driver) |
+| STM32H7 | Cortex-M7  | Dual-core option (M7+M4), 480MHz, RAM per-part: H743/750/753 1MB; H723/725/733/735 564KB; H730 564KB; H7A3/B0/B3 1.4MB — check datasheet | [STM32CubeH7](https://github.com/STMicroelectronics/STM32CubeH7) | [stm32h7xx-hal-driver](https://github.com/STMicroelectronics/stm32h7xx-hal-driver) |
 | STM32H7RS | Cortex-M7  | External PSRAM/Flash via XSPI, 600MHz | [STM32CubeH7RS](https://github.com/STMicroelectronics/STM32CubeH7RS) | [stm32h7rsxx-hal-driver](https://github.com/STMicroelectronics/stm32h7rsxx-hal-driver) |
 | STM32N6 | Cortex-M55 | **NPU (NeuroPU 600 GOPS)**, Helium SIMD, 800MHz | [STM32CubeN6](https://github.com/STMicroelectronics/STM32CubeN6) | [stm32n6xx-hal-driver](https://github.com/STMicroelectronics/stm32n6xx-hal-driver) |
 

@@ -1,5 +1,14 @@
 # Secure Boot, Option Bytes and Firmware Signing — STM32
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 ## RDP (Readout Protection) Levels
 
 ```
@@ -75,7 +84,8 @@ void read_option_bytes(void)
 
 ```c
 /* Execute-only region — code cannot be read back, only executed */
-/* Available on: F4 Revision Z+, L4, G4, H7 */
+/* Available on: F4 Revision Z+, F7, L4, G4 (page or sector granularity varies by family).
+ * NOT available on STM32H7 — H7 uses Secure-Only Flash + RDP + WRP instead of PCROP. */
 
 FLASH_OBProgramInitTypeDef ob = {0};
 HAL_FLASH_Unlock();

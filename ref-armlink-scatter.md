@@ -1,5 +1,14 @@
 # ARM Linker (armlink) Scatter File — Complete Reference
 
+<!-- @trust-header v1 -->
+> **Trust level for this reference**
+>
+> - **Design patterns, decision trees, errata workarounds, protocol-spec content** here is authoritative — that is why this file exists.
+> - **Inline HAL/CMSIS/peripheral code snippets** are illustrative. The HAL drifts between versions and parts. For the canonical version of any HAL symbol at your HAL release: `gh search code <SymbolName> --owner=STMicroelectronics --extension=c` — see [ref-st-github-map.md](ref-st-github-map.md) §8 for the full lookup procedure.
+> - **CRITICAL bugs identified in the 2026-05-16 audit have been corrected** in this file, but verify against your own HAL version before copy-pasting.
+> - **For bootloader / IAP / OTA topics** the canonical checklist + ARM KA001193 + AN5188/2606/3155/3156 references are in [ref-bootloader.md](ref-bootloader.md).
+
+
 Source: ARM Compiler armlink User Guide Version 5.06 (dui0474m) + Keil µVision Linker Dialog (uv4_dg_adsld)
 
 ---
@@ -222,6 +231,8 @@ Pseudo-attributes (placement control):
 | `+FIRST` | Place this section first in the execution region |
 | `+LAST` | Place this section last in the execution region |
 
+**NOTE:** armlink section selectors are case-sensitive in older Arm Compiler versions; always uppercase: `+FIRST`, `+LAST`, `+RO`, `+RW`, `+ZI`, `+XO`.
+
 **CAUTION:** FIRST/LAST must not violate basic attribute sorting order. For example, `FIRST RW` is placed after any RO-CODE or RO-DATA.
 
 Only one FIRST or LAST per execution region. FIRST/LAST must follow a single `input_section_selector`:
@@ -327,7 +338,7 @@ LR_IROM1 0x08000000 0x00200000
     ; Flash: code and RO data
     ER_IROM1 0x08000000 0x00200000
     {
-        *.o (RESET, +First)          ; vector table — always first
+        *.o (RESET, +FIRST)          ; vector table — always first
         *(InRoot$$Sections)          ; ARM runtime root sections
         .ANY (+RO)                   ; all remaining RO
     }
@@ -370,7 +381,7 @@ LR_IROM1 0x08000000 0x00020000      ; internal flash (128KB)
 {
     ER_IROM1 0x08000000 0x00020000
     {
-        *.o (RESET, +First)
+        *.o (RESET, +FIRST)
         *(InRoot$$Sections)
         bootloader.o (+RO)
         .ANY (+RO)
@@ -402,7 +413,7 @@ LR_IROM1 0x08000000 0x00100000      ; 1MB flash
 {
     ER_IROM1 0x08000000 0x00100000
     {
-        *.o (RESET, +First)
+        *.o (RESET, +FIRST)
         *(InRoot$$Sections)
         .ANY (+RO)
     }
@@ -421,7 +432,7 @@ LR_IROM1 0x08000000 0x00080000
 {
     ER_IROM1 0x08000000 0x00080000
     {
-        *.o (RESET, +First)
+        *.o (RESET, +FIRST)
         *(InRoot$$Sections)
         .ANY (+RO)
     }
@@ -465,7 +476,7 @@ ARM_LIB_STACK 0x20020000 EMPTY -0x2000  ; stack: 8KB, grows down
 ```c
 ER_IROM1 0x08000000 0x00200000
 {
-    *.o (RESET, +First)     ; vector table first
+    *.o (RESET, +FIRST)     ; vector table first
     *(InRoot$$Sections)
     .ANY (+RO)
 }
@@ -571,7 +582,7 @@ RW_IRAM1 0x20000000 ANY_SIZE 0x8000 0x00010000
 ```c
 ER_IROM1 0x08000000 0x00200000
 {
-    *.o (RESET, +First)
+    *.o (RESET, +FIRST)
     *(InRoot$$Sections)          ; MUST be in root region (LMA = VMA)
     .ANY (+RO)
 }
@@ -641,7 +652,7 @@ LR_IROM1 FLASH_BASE FLASH_SIZE
 {
     ER_IROM1 FLASH_BASE FLASH_SIZE
     {
-        *.o (RESET, +First)
+        *.o (RESET, +FIRST)
         *(InRoot$$Sections)
         .ANY (+RO)
     }
@@ -673,12 +684,12 @@ If a DMA buffer is placed in DTCM, the DMA transaction silently fails or causes 
 
 If `*(InRoot$$Sections)` is placed in a non-root execution region (where LMA != VMA), the C runtime copy-down code itself cannot be copied — the system hangs at startup before `main()`.
 
-### 3. Missing +First for Vector Table
+### 3. Missing +FIRST for Vector Table
 
-The vector table must be at offset 0 of the flash image. Without `(RESET, +First)`, the linker may place other sections before it. Result: invalid initial SP and PC — system faults before `main()`.
+The vector table must be at offset 0 of the flash image. Without `(RESET, +FIRST)`, the linker may place other sections before it. Result: invalid initial SP and PC — system faults before `main()`.
 
 ```c
-*.o (RESET, +First)    ; mandatory — places startup_stm32xxxx.o RESET section first
+*.o (RESET, +FIRST)    ; mandatory — places startup_stm32xxxx.o RESET section first
 ```
 
 ### 4. Duplicate * Selectors
