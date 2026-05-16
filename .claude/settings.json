@@ -25,7 +25,9 @@
       "Bash(chmod +x /Users/akeles/stm32skill/bin/refresh-st-repo-cache.sh)",
       "Bash(git -C /Users/akeles/stm32skill status --short)",
       "Bash(git -C /Users/akeles/stm32skill add -A)",
-      "Bash(git -C /Users/akeles/stm32skill commit -m ' *)"
+      "Bash(git -C /Users/akeles/stm32skill commit -m ' *)",
+      "Bash(curl -sL 'https://documentation-service.arm.com/documentation/ka001193/1-0/')",
+      "Bash(curl -sL 'https://www.google.com/search?q=ka001193+arm+site:developer.arm.com')"
     ]
   }
 }

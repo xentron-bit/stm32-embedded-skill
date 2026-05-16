@@ -295,11 +295,46 @@ mkdir -p .claude-cache
 # 2. Önce ref-stm32-errata.md'den ilgili bölümleri çıkar
 # 3. Online errata PDF'i fetch et (eğer skill'de yoksa veya stale ise)
 #    WebFetch: https://www.st.com/resource/en/errata_sheet/es<N>.pdf
-# 4. İlgili AN'leri belirle: AN5312 (H7 ODEN), AN5050 (DLYB), AN4861 (dual-bank),
-#    AN2606 (system bootloader addresses), AN5347 (TrustZone)
 ```
 
-Çıktı: `.claude-cache/errata-context.md` — bu MCU için "expected workarounds" listesi.
+#### Default AN set (project-type'a göre)
+
+**Tüm projelerde:**
+- `AN5152` — H7 cache (DMA + D-cache safety)
+
+**Bootloader / IAP / XIP projeleri için (zorunlu set):**
+- `AN5188` — **External memory boot with reduced internal flash** (H730/H7A3 XIP'ın resmi prosedür dokümanı; canonical reference readme'leri bunu işaret eder)
+- `AN2606` — System memory boot mode (per-family bootloader address + entry conditions; option byte / BOOT0 / BOOT1)
+- `AN3155` — USART protocol used in the STM32 bootloader (ROM bootloader UART komut seti; user'ın BL'i AN3155 fallback sağlıyor mu?)
+- `AN4861` — Dual-bank flash + OTA (sadece dual-bank kullanılıyorsa)
+
+**Yüksek hız OSPI/QSPI projeleri için:**
+- `AN5050` — OCTOSPI/QUADSPI yüksek hız + DLYB tuning
+
+**480+ MHz hedefli H7 projeleri için:**
+- `AN5312` — H7 ODEN sequence (sadece H743/H753 rev V için kritik; H730/H735 farklı)
+
+**TrustZone-M projeleri için (H5/U5/L5):**
+- `AN5347` — TrustZone-M SAU/GTZC design
+
+**Kural:** Faz 1.5'te tespit edilen project type'a göre yukarıdan ilgili
+AN'leri çek, `.claude-cache/errata-context.md`'ye özet çıkar. Sonra Faz 6
+benchmark'ında "expected divergence" filter'ı olarak kullan.
+
+#### AN fetch pattern
+
+```bash
+# WebFetch URL şablonu:
+# https://www.st.com/resource/en/application_note/an<NNNN>-<slug>-stmicroelectronics.pdf
+# Slug ST'nin kendi düzeninde, "an5188-external-memory-boot..." gibi.
+# Aramak için WebSearch da kullanılabilir.
+
+# Yerel ref-md'de özet varsa onu kullan (hızlı):
+grep -i 'AN5188\|AN3155\|AN2606' ref-iap-ota.md ref-secure-boot.md
+```
+
+Çıktı: `.claude-cache/errata-context.md` — bu MCU + project-type için
+"expected workarounds + standard procedures" listesi.
 
 ### Faz 3 — Reference Acquisition (sparse clone)
 
@@ -1576,6 +1611,7 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-linker-script.md](ref-linker-script.md) | GCC linker (.ld): MEMORY, SECTIONS, .data/.bss/.noinit |
 | [ref-armlink-scatter.md](ref-armlink-scatter.md) | armlink scatter complete syntax: regions, attributes, .ANY |
 | [ref-iap-ota.md](ref-iap-ota.md) | IAP bootloader, jump, dual-bank swap, CRC verify, DFU |
+| [ref-bootloader.md](ref-bootloader.md) | **Canonical bootloader references (ARM KA001193, AN5188/2606/3155/3156/3154/4286/5447) + BL→App jump checklist + 30+ common bugs** |
 
 ### Safety / Security / Errata
 | File | Contents |
