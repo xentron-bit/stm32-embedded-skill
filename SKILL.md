@@ -238,6 +238,50 @@ Belirleyemezsen → kullanıcıya sor: "MCU part-number ve silikon revizyonu (re
 
 **Neden bu kadar katı?** Domain anlamadan kanonik referans seçemezsin (bir motor controller'a bootloader referansı götürmek anlamsız), business-logic divergence'larını MCU-interface bug'larından ayıramazsın.
 
+#### Faz 1.5b — Unified Product Detection (zorunlu alt-adım)
+
+Eğer kullanıcı **birden fazla proje dizini** işaret ettiyse (örn. `proje/`
+altında `BL/` + `App/`, veya `master/` + `slave/`, veya `gateway/` +
+`radio/`), aşağıdaki **birleşik ürün** kriterlerini test et:
+
+```
+Bunlar TEK ÜRÜN mü? — Aşağıdakilerden ≥2 doğru ise EVET:
+  □ Aynı MCU part-number (her ikisi de STM32H730VBTx gibi)
+  □ Aynı ürün isim prefix'i (DE-XENTRON-V3-BL  vs  DE-XENTRON-V3-RTX5-FATFS)
+  □ Bir dizinin adında "BL/Boot/Loader/IAP" var, diğerinde yok
+  □ Bir dizin küçük (~5-15 dosya), diğeri çok büyük
+  □ Birinde main.c'de "APPLICATION_ADDRESS" / "JumpTo" var
+  □ Hardware peripheral set'leri tamamlayıcı (BL: minimal; App: tam set)
+```
+
+**Eğer EVET → BU NOKTADAN İTİBAREN HER ZAMAN BİRLİKTE ANALİZ ET.**
+
+Asla "önce BL'yi, sonra App'ı" diye ayırma. Bu yanlış çünkü:
+
+| Bug sınıfı | Ayrı analizde | Birleşik analizde |
+|------------|---------------|-------------------|
+| BL→App jump sırasında flash unlock kalması | ❌ Görünmez | ✓ Yakalanır |
+| VTOR offset mismatch (BL jumps to X, App linked at Y) | ❌ Her ikisi de "kendi başına" doğru | ✓ Sınırda görünür |
+| OCTOSPI mem-mapped mode handoff eksik | ❌ Görünmez | ✓ Yakalanır |
+| Watchdog state across handoff | ❌ Görünmez | ✓ Yakalanır |
+| Clock tree BL'de set, App'ta yeniden init | ❌ Tutarsızlık görünmez | ✓ Yakalanır |
+| Shared metadata page (version, boot_count) endianness | ❌ Görünmez | ✓ Yakalanır |
+| Linker script overlap (BL flash + App load addr) | ❌ Her biri kendine göre doğru | ✓ Yakalanır |
+
+**Pipeline değişikliği:** Faz 4 (reference graph) ve Faz 5 (user graph)
+her iki proje için ayrı çalıştırılır ama **Faz 6 benchmark BİRLEŞİK
+olarak yapılır** — BL graph'ı + App graph'ı + handoff metadata tek bir
+"product view" oluşturur. Faz 7 triage'ında yeni kategori:
+
+```
+| Sınıf | Kriter |
+| **Cross-boundary handoff issue** | BL→App sınırında state/format/addr mismatch |
+                                   → SEVERITY +1 (handoff bug'ları pahalıdır)
+```
+
+Birleşik ürün tespit edilmediyse veya kullanıcı sadece bir dizine işaret
+ettiyse normal pipeline.
+
 ### Faz 2 — Errata + AN Context (A1)
 
 Workaround'lar referansta var ama kullanıcıda yok → yanlış flag.
