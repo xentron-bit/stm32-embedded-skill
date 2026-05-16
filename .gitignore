@@ -11,6 +11,10 @@ graphify-out/
 .keil-mcp-config.json
 .keil-mcp-bsdl/
 
+# Per-analysis cache (downloaded ST source for benchmark, errata context, etc.)
+.claude-cache/
+cache/
+
 # Playwright debris
 .playwright-mcp/
 
