@@ -406,6 +406,86 @@ LR_OSPI 0x90000000 0x01000000       ; OCTOSPI bank 1 (16MB XIP)
 }
 ```
 
+> **The example above is minimal (2 RAM regions).** It leaves ITCM, the D2/D3
+> SRAMs, and the Backup SRAM unused, and treats AXI as one block. For a layout
+> that uses *every* RAM region with deterministic `.ANY` balancing, see the
+> complete scatter below.
+
+#### TCM_AXI_SHARED Option Byte (ITCM/AXI reallocation — H72x/H73x)
+
+On the value line a **192 KB physical RAM block is shared between ITCM and
+AXI-SRAM**, configured via FLASH option bytes in 64 KB steps (RM0468, AN4891).
+The scatter file's ITCM length (`0x00000000`) and AXI length (`0x24000000`)
+**MUST match the programmed option bytes**, or RW/ZI placement overflows/aliases.
+
+| Option-byte cut | ITCM | Contiguous AXI-SRAM @ 0x24000000 |
+|-----------------|------|----------------------------------|
+| default (erased) | 64 KB | **320 KB** (128 fixed + 192 shared) |
+| +64 KB to ITCM | 128 KB | 256 KB |
+| +128 KB to ITCM | 192 KB | 192 KB |
+| +192 KB to ITCM | 256 KB | 128 KB |
+
+- **Always present:** DTCM 128 KB (`0x20000000`) and the fixed 128 KB AXI bank.
+  The shared 192 KB lives at `0x24020000` when assigned to AXI (contiguous with
+  the fixed bank) — only the *split* changes, not the addresses.
+- Verify with STM32CubeProgrammer before sizing the scatter. The `0x90000000`
+  XIP value-line default is ITCM=64 KB / AXI=320 KB.
+
+#### Complete Multi-Region Scatter (all RAM, `.ANY` priorities, UNINIT)
+
+General RW/ZI auto-balances DTCM→AXI→D2 via numbered `.ANY`; DMA/D2/D3/Backup
+get purpose-pinned sections; `UNINIT` keeps DMA and backup regions out of the
+startup zero-init.
+
+```c
+; STM32H730 — OCTOSPI XIP @ 0x90000000, default option bytes (ITCM 64K / AXI 320K)
+LR_ROM1 0x90000000 0x00400000 {
+  ER_ROM1 0x90000000 0x00400000 {
+    *.o (RESET, +First)
+    *(InRoot$$Sections)
+    .ANY (+RO)
+    .ANY (+XO)
+  }
+  RW_ITCM 0x00000000 0x00010000 {        ; 64 KB code RAM (size tracks option bytes!)
+    *(.RamFunc)                          ; __attribute__((section(".RamFunc")))
+  }
+  RW_DTCM 0x20000000 0x00020000 {        ; 128 KB, fastest, peripheral-DMA-blind
+    *(STACK)  *(HEAP)                    ; stack/heap → DTCM (startup STACK/HEAP areas)
+    *(.dtcm_data)
+    .ANY3 (+RW +ZI)                      ; general RW/ZI fills here FIRST
+  }
+  RW_AXI 0x24000000 0x00040000 {         ; 256 KB AXI, DMA-capable, cacheable
+    .ANY2 (+RW +ZI)
+  }
+  RW_DMA 0x24040000 UNINIT 0x00010000 {  ; 64 KB DMA buffers (MPU = non-cacheable)
+    *(.dma_buffer)
+  }
+  RW_D2 0x30000000 0x00008000 {          ; 32 KB D2 (DMA1/2) = SRAM1 16K + SRAM2 16K
+    *(.d2_buffer)
+    .ANY1 (+RW +ZI)                      ; spillover
+  }
+  RW_D3 0x38000000 UNINIT 0x00004000 {   ; 16 KB D3 SRAM4 (BDMA / low-power)
+    *(.d3_buffer)
+  }
+  RW_BKP 0x38800000 UNINIT 0x00001000 {  ; 4 KB Backup SRAM (VBAT-retained)
+    *(.backup_noinit)
+  }
+}
+```
+
+Runtime prerequisites for the regions above (scatter placement is necessary but not sufficient):
+- **`RW_DMA` non-cacheable:** the scatter does NOT make it non-cacheable. With
+  D-cache on, configure an MPU region (TEX=001, C=0, B=0, XN) over
+  `0x24040000`/64 KB, or clean/invalidate per transfer.
+- **`RW_BKP` access:** `UNINIT` only stops the startup zero-init. At runtime,
+  before first access: `HAL_PWR_EnableBkUpAccess()` (DBP) +
+  `__HAL_RCC_BKPRAM_CLK_ENABLE()`; add `HAL_PWREx_EnableBkUpReg()` for
+  VBAT/standby retention. Otherwise reads return 0 / writes are swallowed (no fault).
+- **Stack top placement:** `*(STACK)` lands the stack at the region base, not
+  the top. For deterministic top-of-DTCM placement + overflow fault, use
+  `ARM_LIB_STACK 0x20020000 EMPTY -0x4000 { }` instead (don't mix the two idioms —
+  armlink errors on duplicate stack definitions).
+
 ### STM32F4/F7 — Basic Single Flash Layout
 
 ```c
@@ -573,6 +653,38 @@ RW_IRAM1 0x20000000 ANY_SIZE 0x8000 0x00010000
 }
 ```
 
+### Numbered Priority — `.ANY1` / `.ANY2` / `.ANY3`
+
+Append a digit to steer fill order across regions. **Higher number = higher priority = filled FIRST** (Arm armlink User Guide DUI0458B §2.2.2). Plain `.ANY` is priority 0 (lowest, filled last). A specific selector (`*(.dma_buffer)`, `obj.o(...)`) always wins over any `.ANY`.
+
+```c
+RW_DTCM 0x20000000 0x00020000 { .ANY3 (+RW +ZI) }   ; fastest RAM — fills first
+RW_AXI  0x24000000 0x00040000 { .ANY2 (+RW +ZI) }   ; next
+RW_D2   0x30000000 0x00008000 { .ANY1 (+RW +ZI) }   ; spillover — last
+```
+
+> DUI0458B §2.2.2: "When using worst_fit the section is assigned to `.ANY2` because it has higher priority. Only if the priorities are equal does the algorithm come into play."
+
+### Placement Algorithm — `--any_placement`
+
+Linker command-line / Misc controls. Default is `worst_fit`.
+
+| Value | Behavior | Use when |
+|-------|----------|----------|
+| `worst_fit` (default) | Place in region with the **most** free space → levels fill across regions | "spread evenly, don't let any region overflow" |
+| `best_fit` | Place in region with the **least** sufficient free space → tightest packing | "pack dense, free up a whole region" |
+| `first_fit` | First region with room, in scatter-file order | deterministic, order-driven |
+| `next_fit` | Forward-only; once a region is FULL it is never reconsidered | one-pass fill-to-brim in order |
+
+Companion options:
+- `--any_sort_order={descending_size(default)|cmdline}` — order sections are processed (big-first packs better; `cmdline` = reproducible builds).
+- `--any_contingency` (off by default) — reserve ~2% per `.ANY` region for veneers/padding; lowers an overflowing region's priority instead of erroring. `ANY_SIZE` overrides it.
+- `--info=any` — **the key diagnostic**: prints which region every `.ANY` section landed in.
+
+### Why a region stays under-filled while a sibling is cramped
+
+A `.ANY` section is **atomic — never split across regions**. If one section is larger than the *remaining* free space in the preferred region, the **whole** section spills to another `.ANY` region, leaving a hole behind ("region sits 30% empty because one fat array wouldn't fit"). Fixes: raise that region's priority (`.ANY2`/`.ANY3`), pin the array with a named selector, or split it. Alignment padding and veneers can also silently consume space — enable `--any_contingency` if a tightly-sized region overflows unexpectedly.
+
 ---
 
 ## InRoot$$Sections
@@ -670,15 +782,16 @@ LR_IROM1 FLASH_BASE FLASH_SIZE
 ### 1. DTCM DMA Prohibition (STM32H7)
 
 ```
-STM32H7 memory buses:
-  DTCM  0x20000000  128KB  — CPU only (TCM bus). DMA CANNOT access this.
-  AXI   0x24000000  512KB  — CPU + DMA1/2 + MDMA
-  D2S1  0x30000000  128KB  — DMA1/2
-  D2S2  0x30020000   32KB  — DMA1/2
-  D3    0x38000000   16KB  — BDMA only (not DMA1/2)
+STM32H7 memory buses (DMA reachability):
+  ITCM  0x00000000   64KB  — CPU + MDMA (M7 AHBS slave port). Peripheral DMA (DMA1/2) & BDMA CANNOT.
+  DTCM  0x20000000  128KB  — CPU + MDMA (M7 AHBS slave port). Peripheral DMA (DMA1/2) & BDMA CANNOT.
+  AXI   0x24000000  512KB* — CPU + DMA1/2 + MDMA      (* H743/H753 512KB; H730 value line 320KB)
+  D2S1  0x30000000  128KB  — DMA1/2 + MDMA            (H730: SRAM1 16KB + SRAM2 16KB = 32KB)
+  D2S2  0x30020000   32KB  — DMA1/2 + MDMA            (H743/H753 layout; H730 has no SRAM3)
+  D3    0x38000000   16KB  — BDMA + MDMA (not DMA1/2)
 ```
 
-If a DMA buffer is placed in DTCM, the DMA transaction silently fails or causes a bus fault HardFault. No compiler error.
+If a buffer driven by a **peripheral DMA controller (DMA1/DMA2)** or **BDMA** is placed in DTCM or ITCM, the transfer silently fails or raises a bus-fault HardFault — no compiler error. Only **MDMA** can reach the TCMs (via the Cortex-M7 AHBS slave port), so the rule is not absolute but the practical discipline stands: **never put a peripheral-DMA / BDMA buffer in DTCM or ITCM.**
 
 ### 2. InRoot$$Sections Not in Root Region
 

@@ -1887,7 +1887,8 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-fault-handlers.md](ref-fault-handlers.md) | HardFault decode, CFSR/BFAR/MMFAR, reset cause, noinit persist |
 | [ref-boot-clock.md](ref-boot-clock.md) | PLL (F4/H7/H5), flash wait states, CSS, backup domain |
 | [ref-linker-script.md](ref-linker-script.md) | GCC linker (.ld): MEMORY, SECTIONS, .data/.bss/.noinit |
-| [ref-armlink-scatter.md](ref-armlink-scatter.md) | armlink scatter complete syntax: regions, attributes, .ANY |
+| [ref-armlink-scatter.md](ref-armlink-scatter.md) | armlink scatter complete syntax: regions, attributes, .ANY priorities, --any_placement, H730 TCM_AXI_SHARED |
+| [ref-stm32-ram-maps.md](ref-stm32-ram-maps.md) | **Per-family RAM maps + DMA reachability + cache rule + ready scatter/.ld for ALL STM32 (H7/F7/F4/F2/G4/G0/C0/F0/F1/F3/L0/L1/L4/L5/U5/H5/WB/WBA/WL)** |
 | [ref-iap-ota.md](ref-iap-ota.md) | IAP bootloader, jump, dual-bank swap, CRC verify, DFU |
 | [ref-bootloader.md](ref-bootloader.md) | **Canonical bootloader references (ARM KA001193, AN5188/2606/3155/3156/3154/4286/5447) + BL→App jump checklist + 30+ common bugs** |
 
