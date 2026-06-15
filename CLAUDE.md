@@ -70,7 +70,7 @@ When MCU is detected, **before** opening any `.c` file:
    | **BlueNRG-LPS** (BlueNRG-332xy) | **ES0576** → [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) §X |
    | **BlueNRG-LP / BlueNRG-355** (BlueNRG-3x5yz) | verify ST product page (Resources → Errata) |
 
-   > **Güvenlik bildirimi (security advisory):** STM32WB05/06/07/09 + BlueNRG-LP/LPS/355 secure bootloader → **SA0041** (imzalı imaj doğrulama). Secure boot kullanan her LP/LPS/355/WB0 review'ında kontrol et — bkz. [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) §IX.
+   > **Güvenlik bildirimi (security advisory):** BlueNRG-LP/LPS/355 secure bootloader → **SA0041** (imzalı imaj doğrulama). Secure boot kullanan her LP/LPS/355 review'ında kontrol et — bkz. [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) §IX.
 
 3. Cross-check [ref-stm32-errata.md](ref-stm32-errata.md) for known issues
 4. If a critical erratum applies, tag the finding: `errata: [ES0480 §2.x.y]`

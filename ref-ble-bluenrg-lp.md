@@ -4,15 +4,14 @@
 > **Trust level for this reference**
 >
 > - **Device architecture, memory map, power modes, errata workarounds, security-advisory content, OTA architecture, radio-timer model** here is authoritative — that is why this file exists. Sourced from ST datasheets, reference manuals, errata and application notes (catalog below).
-> - **Inline HAL/LL/ACI code snippets** are illustrative. The HAL and the BLE-stack API drift between the legacy *BlueNRG-LP DK* and the modern *STM32CubeWB0* package, and between stack versions. For the canonical symbol at your SDK release: `gh search code <SymbolName> --owner=STMicroelectronics` — see §XI and [ref-st-github-map.md](ref-st-github-map.md).
-> - **API-NAMING TRAP (read §V):** the DK↔WB0 split is **not** an ACI-vocabulary split — the legacy *STSW-BNRGLP-DK* v3.x stack already uses the modern `BLE_STACK_*` + `aci_gatt_srv_*`/`aci_gatt_clt_*` names, and WB0 mostly *renames the files* (`bluenrg_lp_* → stm32wb0x_*`). The two real traps are: **(a)** old **BlueNRG-1/2/MS** ACI (`aci_gatt_add_serv`, `aci_gatt_update_char_value`, `aci_gatt_init`) vs **BlueNRG-LP/WB0** ACI (`aci_gatt_srv_*`/`clt_*`); **(b)** **standalone-SoC** stack tick `BLE_STACK_Tick()` vs **network-coprocessor host** tick `BTLE_StackTick()` (SimpleBlueNRG-LP_HCI). Confirm the WB0 symbol spellings with `gh` — they are not verified offline.
+> - **Inline HAL/LL/ACI code snippets** are illustrative. Verified against the **STSW-BNRGLP-DK v1.5.0** source (BLE Stack Library v3.2a). The API can drift between stack versions; for the canonical symbol at your SDK release confirm in your local DK tree or `gh search code <SymbolName> --owner=STMicroelectronics` — see §XI and [ref-st-github-map.md](ref-st-github-map.md).
+> - **API-NAMING TRAP (read §V):** two independent things, don't conflate them. **(a)** ACI generation: old **BlueNRG-1/2/MS** ACI (`aci_gatt_add_serv`, `aci_gatt_update_char_value`, `aci_gatt_init`) vs the **BlueNRG-LP** ACI (`aci_gatt_srv_*` / `aci_gatt_clt_*`) — the DK v3.x already uses the new names. **(b)** Usage model: **standalone-SoC** stack tick `BLE_STACK_Tick()` vs **network-coprocessor host** tick `BTLE_StackTick()` (SimpleBlueNRG-LP_HCI).
 > - **For generic BLE protocol topics** (PHY, MTU, throughput, connection params, iOS/Android quirks, GATT, pairing/bonding, RF coexistence) see the sister file [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) — this file does **not** duplicate them; it covers the SoC/silicon layer.
 > - **For generic bootloader / IAP / OTA theory** the canonical checklist is in [ref-bootloader.md](ref-bootloader.md); the BlueNRG-specific OTA flow is §VIII here.
 
 Platform: BlueNRG-LP & BlueNRG-LPS — standalone programmable BLE SoC (Arm Cortex-M0+, up to 64 MHz)
 Radio: BlueNRG-LP = BLE 5.2 · BlueNRG-LPS = BLE 5.3 · +8 dBm TX · −97 dBm @1M / −104 dBm @125k · AoA/AoD
-Successor: rebranded into the mainstream STM32 portfolio as **STM32WB0x** (WB05/06/07/09, BLE 5.4) — same silicon family, see §I.4
-SDKs: legacy **STSW-BNRGLP-DK v1.5.0** (01-Dec-2023, son sürüm; BLE Stack Library **v3.2a**) · modern **STM32CubeWB0** (STM32_BLE middleware)
+SDK: **STSW-BNRGLP-DK v1.5.0** (01-Dec-2023, son sürüm; BLE Stack Library **v3.2a**)
 ACI = Application Command Interface (Bluetooth HCI + ST vendor extensions)
 
 ## Kaynak Dokümanlar (source catalog)
@@ -41,11 +40,11 @@ ACI = Application Command Interface (Bluetooth HCI + ST vendor extensions)
 
 | Bölüm | Konu |
 |-------|------|
-| [I. Aile, Part Numarası ve STM32WB0](#i-aile-part-numarası-ve-stm32wb0) | LP vs LPS, order-code decode, STM32WB0 eşlemesi |
+| [I. Aile ve Part Numarası](#i-aile-ve-part-numarası) | LP vs LPS, order-code decode, silikon cut'ları |
 | [II. Bellek Haritası ve Boot](#ii-bellek-haritası-ve-boot) | Flash @ 0x10040000, ROM bootloader, OTP, NVM, REMAP |
 | [III. Donanım Özeti](#iii-donanım-özeti) | Çekirdek, radyo, çevre birimleri, LP vs LPS farkları |
 | [IV. Saat Ağacı ve Bring-up](#iv-saat-ağacı-ve-bring-up) | HSE 32M, RC64MPLL, LSE/LSI, SystemInit, HSE trim |
-| [V. BLE Stack ve ACI API](#v-ble-stack-ve-aci-api) | WB0 vs legacy isimlendirme, BLE_STACK_Init, modüler config |
+| [V. BLE Stack ve ACI API](#v-ble-stack-ve-aci-api) | SoC vs coprocessor, ACI nesil farkı, BLE_STACK_Init, modüler config |
 | [VI. Radio / Virtual Timer](#vi-radio--virtual-timer) | STU, kalibrasyon, VTIMER / RADIO_TIMER API |
 | [VII. Güç Modları](#vii-güç-modları) | DeepStop/Shutdown, power-save seviyeleri, akımlar, RAM retention |
 | [VIII. OTA Firmware Upgrade](#viii-ota-firmware-upgrade) | Servis UUID'leri, paket yapısı, reset-manager vs service-manager |
@@ -56,7 +55,7 @@ ACI = Application Command Interface (Bluetooth HCI + ST vendor extensions)
 
 ---
 
-## I. Aile, Part Numarası ve STM32WB0
+## I. Aile ve Part Numarası
 
 ### I.1 Ailenin yeri
 
@@ -97,19 +96,6 @@ Somut parçalar: **BlueNRG-332AT / -332AC / -332VT / -332VC**. IPD eşi (harici 
 
 ES0576'daki **tüm limitasyonlar her üç cut'ı da etkiler** (§X).
 
-### I.4 STM32WB0x'e taşınma (KRİTİK)
-
-ST, BlueNRG-LP/LPS silikon ailesini ana STM32 portföyüne **STM32WB0x** olarak taşıdı. Aynı Cortex-M0+ çekirdek, aynı radyo IP, aynı BLE stack soyağacı. **Yeni tasarımlarda gidilecek yön STM32WB0'dır** ve güncel/aktif yazılım paketi `STM32CubeWB0`'dır.
-
-| STM32WB0 | Flash / RAM | Karşılığı | Not |
-|----------|-------------|-----------|-----|
-| STM32WB09 | 512 KB / 64 KB | BlueNRG-LP üst uç | En büyük WB0; NUCLEO-WB09KE demo parçası |
-| STM32WB07 / WB06 | (orta) | BlueNRG-LP orta | WB07CC demo parçası |
-| STM32WB05 | 192 KB / 24 KB | **BlueNRG-LPS** | NUCLEO-WB05KZ; flash/RAM birebir LPS |
-| STM32WB05xN | — | BlueNRG-LPS "N" (network-coproc) | x-cube-blemgr başlığı `stm32wb05n_hal_aci.h` |
-
-**Migrasyon pratiği:** STM32CubeMX (.ioc) + birkaç API uyarlaması. En büyük fark BLE API isimlendirmesidir (§V): WB0'da `BLE_STACK_Tick`, `aci_gatt_srv_*`/`aci_gatt_clt_*`, tek autogenerated `ble_api.h`.
-
 ---
 
 ## II. Bellek Haritası ve Boot
@@ -124,7 +110,7 @@ ST, BlueNRG-LP/LPS silikon ailesini ana STM32 portföyüne **STM32WB0x** olarak 
 | **ROM** (ST-reserved) | `0x1000 0000` | 7 KB: ilk **6 KB UART bootloader**, son 1 KB ADC trim + ST değerleri |
 | **OTP** (kullanıcı) | OTP alanı; LPS lock `0x1000 1BFC` | 1 KB, **silinemez**, kilitlenebilir |
 | OTP — imaj başlangıç adresi | **`0x1000 1804`** | secure bootloader bunu okur — bkz. SA0041 (§IX) |
-| **Main Flash** | **`0x1000 0000` taban; uygulama `0x1004 0000`** | LPS 192 KB · LP 256 KB · WB09 512 KB |
+| **Main Flash** | **`0x1000 0000` taban; uygulama `0x1004 0000`** | LPS 192 KB · LP 256 KB |
 | Reset Manager / OTA taban | `0x1004 0000` | OTA reset manager bu adreste başlar (§VIII) |
 | Lower application (OTA) | `0x1004 0800` | reset manager üstü |
 | **NVM** (BLE stack non-volatile) | flash'ın **üst ucu**, ~4 KB | bonding/security DB; `REGION_NVM` |
@@ -136,7 +122,7 @@ ST, BlueNRG-LP/LPS silikon ailesini ana STM32 portföyüne **STM32WB0x** olarak 
 | APB2 (RF) | `0x6000 0000` | radyo IP |
 | Cortex-M0+ iç | `0xE000 0000` | NVIC/SysTick/SCB |
 
-> Linker script ORIGIN değerleri: GCC `stm32wb0{5,9}_flash.ld`, ARM `.sct` scatter, IAR `.icf` — `cmsis-device-wb0:Source/Templates/{gcc,arm,iar}/linker/`. Parametrik semboller `MEMORY_FLASH_APP_OFFSET/SIZE`, `MEMORY_RAM_APP_OFFSET` static-stack/OTA bölünmesi için uygulamayı kaydırmaya izin verir.
+> Linker script ORIGIN değerleri (DK v1.5.0): GCC `BlueNRG_LP.ld` / `BlueNRG_LPS.ld`, Keil ARM `BlueNRG_LP[S].sct` scatter, IAR `BlueNRG_LP[S].icf` — her projenin `WiSE-Studio/`, `MDK-ARM/`, `EWARM/` alt-klasöründe. Parametrik `_MEMORY_FLASH_BEGIN_ = 0x10040000` ve `_MEMORY_RAM_BEGIN_` sembolleri static-stack/OTA bölünmesi için uygulamayı kaydırmaya izin verir (BLE_OTA_ResetManager `.icf` örneği: app `0x10040800`).
 
 ### II.2 Boot ve REMAP
 
@@ -219,7 +205,6 @@ if (SystemInit(SYSCLK_64M, BLE_SYSCLK_32M) != SUCCESS) {
     /* Saat yapılandırması başarısız — radyo çalışmaz, dur */
     while (1) { }
 }
-/* STM32CubeWB0'da eşdeğeri HAL_Init() + SystemClock_Config() (CubeMX üretir) */
 ```
 
 ### IV.3 HSE kristal trim
@@ -230,11 +215,11 @@ Radyo doğruluğu HSE 32 MHz kristalin doğru "load capacitance trim"ine bağlı
 
 ## V. BLE Stack ve ACI API
 
-> 🔑 **İKİ AYRI EKSEN — KARIŞTIRMA.** "DK mı WB0 mı" tek başına API isimlendirmesini belirlemez. Doğrulanan gerçek (STSW-BNRGLP-DK **v1.5.0**, stack v3.2a kaynağından):
-> 1. **Kullanım modeli** (asıl isim farkını bu belirler): tüm stack çip üstünde mi (**standalone SoC**), yoksa BlueNRG-LP ağ-yardımcı işlemci olup harici MCU mu sürüyor (**network coprocessor / HCI host**)?
-> 2. **SDK nesli:** legacy **STSW-BNRGLP-DK** mi, ayrı/yeni **STM32CubeWB0** mı? Bu eksen büyük ölçüde **dosya/yol yeniden adlandırması**dır (`bluenrg_lp_* → stm32wb0x_*`), ACI sözcük dağarcığını değiştirmez. **WB0 sembol yazımları offline doğrulanmadı → `gh` ile teyit et.**
+> 🔑 **İKİ AYRI EKSEN — KARIŞTIRMA.** Doğrulanan gerçek (STSW-BNRGLP-DK **v1.5.0**, stack v3.2a kaynağından):
+> 1. **Kullanım modeli:** tüm stack çip üstünde mi (**standalone SoC**), yoksa BlueNRG-LP ağ-yardımcı işlemci olup harici MCU mu sürüyor (**network coprocessor / HCI host**)? İşlem-döngüsü fonksiyonu buna göre değişir.
+> 2. **ACI nesli:** eski BlueNRG-1/2/MS sözcük dağarcığı mı, yoksa BlueNRG-LP'nin `srv`/`clt` ACI'si mi? DK v3.x **zaten yeni** olanı kullanır.
 
-**A) Kullanım modeli — isim farkı buradan gelir (her ikisi de DK içinde mevcut):**
+**A) Kullanım modeli — işlem-döngüsü fonksiyonu buradan gelir (her ikisi de DK içinde mevcut):**
 
 | | Standalone SoC (tam stack çipte) | Network coprocessor (harici host) |
 |---|----------------------------------|-----------------------------------|
@@ -243,18 +228,16 @@ Radyo doğruluğu HSE 32 MHz kristalin doğru "load capacitance trim"ine bağlı
 | Event teslimi | uygulama adlandırılmış callback'leri implemente eder: `hci_le_connection_complete_event(...)`, `aci_gatt_srv_attribute_modified_event(...)`, `aci_hal_*_event(...)` | host HCI dispatch'i (SimpleBlueNRG-LP_HCI) |
 | Stack lib | `libbluenrg_lp_stack.a` (host+controller) / `libbluenrg_lp_stack_controller_only.a` | host kütüphane + ağ-yardımcı FW imajı çipte |
 
-**B) ACI sözcük dağarcığı — asıl "naming trap" nesil farkıdır, DK↔WB0 değil:**
+**B) ACI sözcük dağarcığı — asıl "naming trap" nesil farkıdır:**
 
-| İşlev | **Eski** BlueNRG-1/2/MS | **Yeni** BlueNRG-LP / WB0 (DK v3.x'te zaten bu) |
-|-------|------------------------|------------------------------------------------|
+| İşlev | **Eski** BlueNRG-1/2/MS | **BlueNRG-LP** (DK v3.x'te zaten bu) |
+|-------|------------------------|--------------------------------------|
 | GATT sunucu | `aci_gatt_init`, `aci_gatt_add_serv`, `aci_gatt_update_char_value` | `aci_gatt_srv_init`, `aci_gatt_srv_add_service`, `aci_gatt_srv_add_char`, `aci_gatt_srv_notify`, `aci_gatt_srv_resp` (`ble_gatt_srv_def_t`/`ble_gatt_chr_def_t`) |
 | GATT istemci | `aci_gatt_disc_*`, `aci_gatt_read_*` | `aci_gatt_clt_disc_*`, `aci_gatt_clt_read[_long\|_using_char_uuid]`, `aci_gatt_clt_write` |
 
-DK (`bluenrg_lp_*`) ve WB0 (`stm32wb0x_*`) arasında **dosya adları** değişir; lib: DK `libbluenrg_lp_stack[_controller_only].a` ↔ WB0 `stm32wb0x_ble_stack[_controller_only].a` (WB0 lib adını `gh` ile doğrula).
-
 Ortak (model/nesil fark etmez): `aci_gap_*`, `aci_hal_*`, `aci_l2cap_*`, `hci_*`/`hci_le_*`, `BLE_STACK_Init()`, `tBleStatus`.
 
-### V.1 Stack init — DK kanonik: `Bluetooth_LE/inc/bluenrg_lp_stack.h` (WB0: yeniden adlandırılmış `stm32wb0x_*`)
+### V.1 Stack init — kanonik: `Bluetooth_LE/inc/bluenrg_lp_stack.h`
 
 Doğrulanmış DK v1.5.0 deseni (`BLE_Beacon_main.c`). Struct uygulamadaki **`BLE_STACK_INIT_PARAMETERS`** makrosuyla (app_conf.h) doldurulur:
 
@@ -284,22 +267,20 @@ while (1) {
 }
 ```
 
-> **KURAL (`bluenrg_lp_stack.h`):** `BLE_STACK_Tick()` çalışırken **hiçbir** stack fonksiyonu çağrılmamalı. Bir stack fonksiyonu bir ISR'den çağrılabiliyorsa, o IRQ `BLE_STACK_Tick()` süresince **disable** edilmeli. *(DK v1.5.0'da `BLE_STACK_ProcessRequest` / `BLE_STACK_TickNoEvents` **yok** — WB0 sürümünde varsa `gh` ile doğrula.)*
+> **KURAL (`bluenrg_lp_stack.h`):** `BLE_STACK_Tick()` çalışırken **hiçbir** stack fonksiyonu çağrılmamalı. Bir stack fonksiyonu bir ISR'den çağrılabiliyorsa, o IRQ `BLE_STACK_Tick()` süresince **disable** edilmeli. *(DK v1.5.0'da `BLE_STACK_ProcessRequest` / `BLE_STACK_TickNoEvents` **yok**.)*
 >
-> Doğrula: `gh search code 'BLE_STACK_InitTypeDef' --owner=STMicroelectronics` → DK kanonik `Middlewares/ST/Bluetooth_LE/inc/bluenrg_lp_stack.h`; WB0 muadili `stm32wb0x_*` altında (alan sırasını teyit et).
+> Kanonik kaynak: `Middlewares/ST/Bluetooth_LE/inc/bluenrg_lp_stack.h` (alan sırası burada).
 
 ### V.2 Modüler stack yapılandırması
 
-Her özellik bir `*_ENABLED` makrosuyla derlenir. **DK'da kanonik dosya `Bluetooth_LE/inc/stack_user_cfg.h`** (WB0'da yeniden adlandırılmış `ble_stack_user_cfg.h`); uygulamadaki `app_conf.h` `CFG_BLE_*` değerlerine bağlanır. DK `stack_user_cfg.h`'tan doğrulanmış makrolar: `CONNECTION_ENABLED`, `CONTROLLER_MASTER_ENABLED`, `CONTROLLER_PRIVACY_ENABLED`, `SECURE_CONNECTIONS_ENABLED`, `CONTROLLER_DATA_LENGTH_EXTENSION_ENABLED`, `CONTROLLER_2M_CODED_PHY_ENABLED`, `CONTROLLER_EXT_ADV_SCAN_ENABLED`, `CONTROLLER_PERIODIC_ADV_ENABLED`, `CONTROLLER_CTE_ENABLED`, `CONTROLLER_POWER_CONTROL_ENABLED`, `CONTROLLER_CIS_ENABLED`, `CONTROLLER_BIS_ENABLED`, `CONTROLLER_ISO_ENABLED`, `CONTROLLER_CHAN_CLASS_ENABLED`, `L2CAP_COS_ENABLED`, `EATT_ENABLED`, `CONNECTION_SUBRATING_ENABLED`.
-İki link konfigürasyonu iki prebuilt lib'e eşlenir: **DK** tam = `libbluenrg_lp_stack.a`, sadece-controller = `libbluenrg_lp_stack_controller_only.a` *(DK `library/` içinde doğrulandı)*; **WB0** muadili = `stm32wb0x_ble_stack[_controller_only].a` *(adı `gh` ile teyit et)*. **Flash/RAM küçültmenin ana kolu budur** — kullanmadığın profili `0` yap.
+Her özellik bir `*_ENABLED` makrosuyla derlenir. Kanonik dosya `Bluetooth_LE/inc/stack_user_cfg.h`; uygulamadaki `app_conf.h` `CFG_BLE_*` değerlerine bağlanır. `stack_user_cfg.h`'tan doğrulanmış makrolar: `CONNECTION_ENABLED`, `CONTROLLER_MASTER_ENABLED`, `CONTROLLER_PRIVACY_ENABLED`, `SECURE_CONNECTIONS_ENABLED`, `CONTROLLER_DATA_LENGTH_EXTENSION_ENABLED`, `CONTROLLER_2M_CODED_PHY_ENABLED`, `CONTROLLER_EXT_ADV_SCAN_ENABLED`, `CONTROLLER_PERIODIC_ADV_ENABLED`, `CONTROLLER_CTE_ENABLED`, `CONTROLLER_POWER_CONTROL_ENABLED`, `CONTROLLER_CIS_ENABLED`, `CONTROLLER_BIS_ENABLED`, `CONTROLLER_ISO_ENABLED`, `CONTROLLER_CHAN_CLASS_ENABLED`, `L2CAP_COS_ENABLED`, `EATT_ENABLED`, `CONNECTION_SUBRATING_ENABLED`.
+İki link konfigürasyonu iki prebuilt lib'e eşlenir: tam = `libbluenrg_lp_stack.a`, sadece-controller = `libbluenrg_lp_stack_controller_only.a` *(DK `library/` içinde doğrulandı)*. **Flash/RAM küçültmenin ana kolu budur** — kullanmadığın profili `0` yap.
 
 ### V.3 Event modeli — DK: `bluenrg_lp_events.h`
 
 DK'da (standalone SoC) uygulama, almak istediği her event için adlandırılmış callback'i **doğrudan implemente eder** (zayıf default'ları override eder). Doğrulanmış örnekler (`SensorDemo`): `hci_le_connection_complete_event(...)`, `hci_disconnection_complete_event(...)`, `aci_gatt_srv_attribute_modified_event(...)`, `aci_hal_end_of_radio_activity_event(...)`, `hci_hardware_error_event(...)`, `aci_hal_fw_error_event(...)`. Prototipler `bluenrg_lp_events.h`'ta.
 
-> **WB0 (DOĞRULANMADI):** WB0 paketinde event dağıtımının `BLE_STACK_Event(hci_pckt*, len)` + üretilen `*_event_rp0` cast'leri kalıbıyla mı yoksa aynı adlandırılmış-callback modeliyle mi geldiğini `gh` ile teyit et — offline doğrulayamadım. DK adlandırılmış-callback modelini kullanır.
-
-> Bağlantı/PHY/MTU/throughput state machine'leri ve ACI komut örnekleri için [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) (BlueNRG-355 ACI isimleriyle) — LP/WB0'da GATT için `aci_gatt_srv_*` / `aci_gatt_clt_*` kullan.
+> Bağlantı/PHY/MTU/throughput state machine'leri ve ACI komut örnekleri için [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) (BlueNRG-355 ACI isimleriyle) — LP'de GATT için `aci_gatt_srv_*` / `aci_gatt_clt_*` kullan.
 
 ---
 
@@ -307,9 +288,7 @@ DK'da (standalone SoC) uygulama, almak istediği her event için adlandırılmı
 
 BlueNRG-LP/LPS link controller'ı tek bir donanım **radio timer counter** sunar. Uygulama bunu kullanmaz; bunun üzerine kurulu **radio timer module** (= "virtual timer" sürücüsü) kullanılır. (AN5469)
 
-**Sürücü dosyaları:**
-- STSW-BNRGLP-DK: `rf_driver_hal_vtimer.c/.h`, `rf_driver_ll_timer.c/.h`
-- STM32CubeWB0: `stm32wb0x_hal_radio_timer.c/.h`, `stm32wb0x_ll_radio_timer.c/.h`
+**Sürücü dosyaları (STSW-BNRGLP-DK):** `rf_driver_hal_vtimer.c/.h`, `rf_driver_ll_timer.c/.h` (`Drivers/Peripherals_Drivers/`)
 
 **İki katman:** High-Level (virtual timer kuyruğu, callback yönetimi, kalibrasyon ve radyo-olay zamanlama) + Low-Level (zaman birim dönüşümleri, yavaş saat ölçümü, donanım timer programlama).
 
@@ -327,21 +306,21 @@ BlueNRG-LP/LPS link controller'ı tek bir donanım **radio timer counter** sunar
 - Bir kalibrasyon ~**800 µs** sürer.
 - **Harici XO** kullanılıyorsa kalibrasyona gerek yok → `PeriodicCalibrationInterval = 0`.
 
-### VI.3 API (DK ↔ WB0 eşlemesi)
+### VI.3 API (STSW-BNRGLP-DK)
 
-> **DK sütunu** STSW-BNRGLP-DK v1.5.0 `rf_driver_hal_vtimer.h`'tan doğrulandı. **WB0 sütunu (`HAL_RADIO_TIMER_*`) DOĞRULANMADI** — STM32CubeWB0 SDK offline elde yok; sembolleri `gh search code 'HAL_RADIO_TIMER_Init' --owner=STMicroelectronics` ile teyit et.
+> `rf_driver_hal_vtimer.h`'tan doğrulandı (DK v1.5.0).
 
-| İşlev | STSW-BNRGLP-DK | STM32CubeWB0 |
-|-------|----------------|--------------|
-| Init | `HAL_VTIMER_Init(&InitStruct)` | `HAL_RADIO_TIMER_Init(&Init)` |
-| Ana döngü tick | `HAL_VTIMER_Tick()` | `HAL_RADIO_TIMER_Tick()` |
-| Timer IRQ handler içinden | `HAL_VTIMER_TimeoutCallback()` *(user callback DEĞİL)* | `HAL_RADIO_TIMER_TimeoutCallback()` |
-| Sanal timer başlat (ms) | `HAL_VTIMER_StartTimerMs(&h, ms)` | `HAL_RADIO_TIMER_StartVirtualTimer(&h, ms)` |
-| Sanal timer başlat (mutlak STU) | `HAL_VTIMER_StartTimerSysTime(&h, t)` | `..._StartVirtualTimerSysTime(&h, t)` |
-| Durdur | `HAL_VTIMER_StopTimer(&h)` | `..._StopVirtualTimer(&h)` |
-| Şimdiki zaman (STU) | `HAL_VTIMER_GetCurrentSysTime()` | `HAL_RADIO_TIMER_GetCurrentSysTime()` |
-| Radyo timer ayarla | `HAL_VTIMER_SetRadioTimerValue(t, evt, cal)` | `HAL_RADIO_TIMER_SetRadioTimerValue(...)` |
-| Radyo timer temizle | `HAL_VTIMER_ClearRadioTimerValue()` | `HAL_RADIO_TIMER_ClearRadioTimerValue()` |
+| İşlev | API |
+|-------|-----|
+| Init | `HAL_VTIMER_Init(&InitStruct)` |
+| Ana döngü tick | `HAL_VTIMER_Tick()` |
+| Timer IRQ handler içinden | `HAL_VTIMER_TimeoutCallback()` *(user callback DEĞİL)* |
+| Sanal timer başlat (ms) | `HAL_VTIMER_StartTimerMs(&h, ms)` |
+| Sanal timer başlat (mutlak STU) | `HAL_VTIMER_StartTimerSysTime(&h, t)` |
+| Durdur | `HAL_VTIMER_StopTimer(&h)` |
+| Şimdiki zaman (STU) | `HAL_VTIMER_GetCurrentSysTime()` |
+| Radyo timer ayarla | `HAL_VTIMER_SetRadioTimerValue(t, evt, cal)` |
+| Radyo timer temizle | `HAL_VTIMER_ClearRadioTimerValue()` |
 
 ```c
 /* Init struct (DK) */
@@ -470,13 +449,13 @@ Flash:  [OTA Service Manager + Reset Manager @0x10040000] [New App (OTA servissi
 
 ### IX.1 UART system bootloader (AN5471)
 
-ROM'daki 6 KB bootloader (`0x10000000`), reset anında **PA10 yüksek** ile girilir. UART, otomatik baud (1 Mbps'e kadar), 8N1. STM32CubeProgrammer (≥2.17) ve RF-Flasher (STSW-BNRGFLASHER) bu protokolü kullanır. `stm32-hotspot/STM32L4-System-DFU-WB0` bir host MCU'nun hedefi UART bootloader'a sürmesini gösterir.
+ROM'daki 6 KB bootloader (`0x10000000`), reset anında **PA10 yüksek** ile girilir. UART, otomatik baud (1 Mbps'e kadar), 8N1. STM32CubeProgrammer (≥2.17) ve RF-Flasher (STSW-BNRGFLASHER) bu protokolü kullanır.
 
 DK'daki **Secure Bootloader GUI** PC aracı (STSW-BNRGLP-DK v1.5.0): authentication key üretir, binary imajı **imzalar** ve secure bootloader'ı **OTP üzerinden aktive** eder — SA0041/AN6140 ile doğrudan ilgili (§IX.2). Init parametreleri için **BlueNRG-X Radio Init Wizard** `BLE_STACK_Init()` ayarlarını üretip `*_config.h` çıkarır.
 
 ### IX.2 ⚠️ SA0041 — Secure bootloader imaj-doğrulama açığı (Rev 2, Jul 2025)
 
-**Etkilenen:** STM32WB05 (bootloader v0x02), WB06/07/09 (v0x04), **BlueNRG-332xy / LPS** (v0x02), **BlueNRG-3x5yz / LP & 355** (v0x04) — bootloader silikona gömülü.
+**Etkilenen:** **BlueNRG-332xy / LPS** (bootloader v0x02), **BlueNRG-3x5yz / LP & 355** (v0x04) — bootloader silikona gömülü.
 
 **Açık:** Aşağıdakilerden biri imza doğrulamasını bozar:
 1. İmzalı uygulama imajını **flash başlangıcı `0x10040000` dışına** koymak.
@@ -486,7 +465,7 @@ DK'daki **Secure Bootloader GUI** PC aracı (STSW-BNRGLP-DK v1.5.0): authenticat
 
 **Çözüm:** **AN6140 v3**'teki talimatları izle; imajı tam olarak `0x10040000`'a yerleştir ve OTP `0x10001804`'ü imaj başlangıç adresine eşitle. *Credit: Johannes Obermaier, Amazon · psirt@st.com.*
 
-> Bu, mevcut [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) cihazlarını (BlueNRG-3x5yz) **de** etkiler — secure boot kullanan her LP/LPS/355/WB0 projesinde kontrol et.
+> Bu, mevcut [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) cihazlarını (BlueNRG-3x5yz) **de** etkiler — secure boot kullanan her LP/LPS/355 projesinde kontrol et.
 
 ### IX.3 Genel güvenlik
 
@@ -521,7 +500,7 @@ BlueNRG-LPS, **cut 2.0 / 2.1 / 2.2'nin tamamını** etkileyen 4 limitasyon. (Err
 - **Etki:** Radyo RX'te asılı kalır, tamamlanma interrupt'ı üretmez.
 - **Workaround:** CTE'li extended adv almaya hazırlanırken (`TxRxPack.CTEAndSamplingEnable=1`, `TxRxPack.Advertise=1`) radyonun kilitlenebileceğini varsay; **paralel bir watchdog timer** kur (max beklenen payload+CTE süresi kadar). Interrupt gelmeden süre dolarsa mevcut alımı **abort** et.
 
-> **BlueNRG-LP errata'sı:** Bu dosya BlueNRG-LPS (ES0576) limitasyonlarını içerir. BlueNRG-LP için ayrı errata sheet'i, review öncesi ST ürün sayfasından (Resources → Errata) doğrula; STM32WB0x'e geçiş varsa WB0 errata'sını da kontrol et.
+> **BlueNRG-LP errata'sı:** Bu dosya BlueNRG-LPS (ES0576) limitasyonlarını içerir. BlueNRG-LP için ayrı errata sheet'i, review öncesi ST ürün sayfasından (Resources → Errata) doğrula.
 
 ---
 
@@ -529,61 +508,43 @@ BlueNRG-LPS, **cut 2.0 / 2.1 / 2.2'nin tamamını** etkileyen 4 limitasyon. (Err
 
 ### XI.1 Repolar (GitHub-first kaynak)
 
-| Repo | İçerik |
-|------|--------|
-| `STMicroelectronics/STM32CubeWB0` | **Güncel/aktif** tam paket (v1.4.1): HAL/LL, BLE middleware (STM32_BLE), 3 Nucleo örnek seti |
-| `STMicroelectronics/stm32wb0x-hal-driver` | HAL + LL sürücü bileşeni (`hal_radio_timer` dahil) |
-| `STMicroelectronics/cmsis-device-wb0` | CMSIS device: `stm32wb0{5,6,7,9}.h`, startup, linker, `system_stm32wb0x.c` |
+| Repo / Paket | İçerik |
+|--------------|--------|
+| **STSW-BNRGLP-DK v1.5.0** | Resmi **son** ve **kanonik** DK (01-Dec-2023, BLE stack v3.2a; st.com Inno Setup installer — ST GitHub'da YOK). macOS'ta kurmadan açma: `brew install innoextract && innoextract -s "BlueNRG-LP_LPS DK-1.5.0.0-Setup.exe"`. İçerik: stack lib + 26 BLE + 5 NWK + peripheral örnekleri (§XI.4). Bayat ayna (son çare): `svcguy/BlueNRG-LP_LPS-DK-1.2.0` |
 | `STMicroelectronics/stm32-mw-wpan` | BLE stack middleware upstream aynası (`ble/stack/{include,lib}`) |
-| `STMicroelectronics/x-cube-blemgr` | BLE Manager soyutlaması (`stm32wb05n_hal_aci.h`) |
-| `STMicroelectronics/fp-sns-datalog2` | Eski BlueNRG-LP stack kopyası (`Middlewares/ST/BlueNRG-LP/...`) |
-| **STSW-BNRGLP-DK v1.5.0** | Resmi **son** legacy DK (01-Dec-2023, BLE stack v3.2a; st.com Inno Setup installer — ST GitHub'da YOK). macOS'ta kurmadan açma: `brew install innoextract && innoextract -s "BlueNRG-LP_LPS DK-1.5.0.0-Setup.exe"`. İçerik: stack lib + 26 BLE + 5 NWK + peripheral örnekleri (§XI.4). Bayat ayna (son çare): `svcguy/BlueNRG-LP_LPS-DK-1.2.0` |
+| `STMicroelectronics/fp-sns-datalog2` | BlueNRG-LP stack kopyası (`Middlewares/ST/BlueNRG-LP/...`) |
 | `stm32-hotspot/BlueNRG_LP*_HSE_CALIB*` | HSE kristal trim yardımcıları (buton/MCO/RTT) |
 
 ### XI.2 `gh` reçeteleri
 
+> **Kanonik kaynak yerel DK'dır** (`STSW-BNRGLP-DK v1.5.0`, ST GitHub'da yok). Sembolleri DK ağacında ara; `gh` reçeteleri yalnızca upstream ayna doğrulaması içindir.
+
 ```bash
-# Stack init struct alanları (WB0 kanonik)
+# Yerel DK'da sembol doğrulama (birincil yöntem)
+grep -rn 'BLE_STACK_InitTypeDef' <DK>/Middlewares/ST/Bluetooth_LE/inc/bluenrg_lp_stack.h
+grep -rn 'aci_gatt_srv_add_char\|aci_gatt_clt_write' <DK>/Middlewares/ST/Bluetooth_LE/inc/bluenrg_lp_api.h
+
+# Upstream ayna (stack include/lib) — gh ile, klonlamadan
 gh search code 'BLE_STACK_InitTypeDef' --owner=STMicroelectronics --json repository,path
-# → STM32CubeWB0:Middlewares/ST/STM32_BLE/stack/include/ble_stack.h
+# → stm32-mw-wpan / fp-sns-datalog2 altında ble/stack kopyaları
 
-# Bir header'ı klonlamadan dök
-gh api repos/STMicroelectronics/STM32CubeWB0/contents/Middlewares/ST/STM32_BLE/stack/include/ble_api.h \
-  --jq .content | base64 -d | less
-
-# Yeni srv/clt GATT isimleri (BlueNRG-LP DK v3.x + WB0) vs eski nesil
-gh search code 'aci_gatt_srv_add_char'  --owner=STMicroelectronics --json repository,path  # LP DK + WB0
-gh search code 'aci_gatt_update_char_value' --owner=STMicroelectronics --json repository,path  # eski BlueNRG-1/2/MS (LP DK'da YOK)
-
-# Event payload struct'ı
-gh search code 'hci_le_connection_complete_event_rp0' --owner=STMicroelectronics --json repository,path
-
-# Radio timer sürücüsü
-gh search code 'HAL_RADIO_TIMER_Init' --owner=STMicroelectronics --json repository,path
-
-# Bir profil için tam örnek
-gh api repos/STMicroelectronics/STM32CubeWB0/contents/Projects/NUCLEO-WB09KE/Applications/BLE --jq '.[].name'
-
-# Linker memory map (ORIGIN/LENGTH)
-gh api repos/STMicroelectronics/cmsis-device-wb0/contents/Source/Templates/gcc/linker/stm32wb09_flash.ld \
-  --jq .content | base64 -d
-
-# Prebuilt stack lib'leri
-gh api repos/STMicroelectronics/STM32CubeWB0/contents/Middlewares/ST/STM32_BLE/stack/lib --jq '.[].name'
+# Yeni srv/clt GATT isimleri vs eski nesil
+gh search code 'aci_gatt_srv_add_char'  --owner=STMicroelectronics --json repository,path  # BlueNRG-LP (yeni)
+gh search code 'aci_gatt_update_char_value' --owner=STMicroelectronics --json repository,path  # eski BlueNRG-1/2/MS (LP'de YOK)
 ```
 
 ### XI.3 Toolchain ve flashing
 
 | IDE | Klasör | Startup | Linker |
 |-----|--------|---------|--------|
-| IAR EWARM | `EWARM/` | `startup_stm32wb0x.s` | `stm32wb0x_flash.icf` |
-| Keil MDK-ARM | `MDK-ARM/` | `startup_stm32wb0x.s` | `stm32wb0x_flash.sct` (scatter) |
-| STM32CubeIDE (GCC) | `STM32CubeIDE/` | startup `.s` | `*_FLASH.ld` |
-| Config | proje kökü | `.ioc` (CubeMX) | — |
+| IAR EWARM | `EWARM/` | `startup_BlueNRG_LP.c` | `BlueNRG_LP.icf` / `BlueNRG_LPS.icf` |
+| Keil MDK-ARM | `MDK-ARM/` | `startup_BlueNRG_LP.c` | `BlueNRG_LP[S].sct` (scatter) |
+| WiSE-Studio (GCC) | `WiSE-Studio/` | `startup_BlueNRG_LP.c` | `BlueNRG_LP[S].ld` |
+| System | — | — | `system_BlueNRG_LP.c` |
 
 | Flash aracı | Paket | Cihaz / arayüz |
 |-------------|-------|----------------|
-| STM32CubeProgrammer (≥2.17) | st.com | WB05/06/07/09 — SWD + UART; flash/OTP/key |
+| STM32CubeProgrammer (≥2.17) | st.com | BlueNRG-LP/LPS — SWD + UART; flash/OTP/key |
 | RF-Flasher Utility | STSW-BNRGFLASHER | BlueNRG-1/2/**LP/LPS** — UART bootloader + SWD (ST-LINK/J-Link/CMSIS-DAP) |
 | BlueNRG GUI | STSW-BNRGUI | HCI/ACI konsolu, OTA bootloader aracı, IFR/HW param |
 | UART ROM bootloader | gömülü | PA10 yüksek @reset; AN5471 |
@@ -604,11 +565,11 @@ SoC bring-up + BLE + güç + OTA için zorunlu kontrol listesi:
 **Saat / radyo**
 - [ ] HSE 32 MHz kristal var ve **trim doğru** (MCO/RF tone ile doğrula) — yoksa radyo çalışmaz/sapar.
 - [ ] İç LSI kullanılıyorsa `PeriodicCalibrationInterval` set edildi (≤31 s); harici XO ise 0.
-- [ ] `SystemInit(SYSCLK_64M, BLE_SYSCLK_32M)` (DK) veya CubeMX clock config başarı döndü.
+- [ ] `SystemInit(SYSCLK_64M, BLE_SYSCLK_32M)` başarı döndü.
 
 **BLE stack**
-- [ ] Doğru kullanım modeli/API (§V): **standalone SoC** → `BLE_STACK_Tick()`; **network coprocessor (harici host)** → `BTLE_StackTick()`. (DK↔WB0 sadece dosya adı farkı; isim ekseni bu değil.)
-- [ ] GATT için LP/WB0 ACI'si kullanılıyor: `aci_gatt_srv_*` / `aci_gatt_clt_*` — eski BlueNRG-1/2/MS `aci_gatt_add_serv` / `aci_gatt_update_char_value` DEĞİL.
+- [ ] Doğru kullanım modeli/API (§V): **standalone SoC** → `BLE_STACK_Tick()`; **network coprocessor (harici host)** → `BTLE_StackTick()`.
+- [ ] GATT için BlueNRG-LP ACI'si kullanılıyor: `aci_gatt_srv_*` / `aci_gatt_clt_*` — eski BlueNRG-1/2/MS `aci_gatt_add_serv` / `aci_gatt_update_char_value` DEĞİL.
 - [ ] `BLE_STACK_Init()` dönüşü `BLE_STATUS_SUCCESS (0x00)` kontrol edildi.
 - [ ] `BLE_STACK_Tick()` ana döngüde; **ISR'den çağrılmıyor** (ISR'de yalnız `BLE_STACK_ProcessRequest()`).
 - [ ] Kullanılmayan stack modülleri `CFG_BLE_*` ile kapatıldı (flash/RAM tasarrufu).

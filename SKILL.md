@@ -1,6 +1,6 @@
 ---
 name: stm32-embedded-dev
-description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F2/F3/F4/F7/G0/G4/H5/H7/H7RS/L0/L1/L4/L5/U0/U5/WB/WBA/N6) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX, Zephyr). Trigger for peripheral drivers (I2C/SPI/UART/CAN/FDCAN/DMA/ADC/Timer/HRTIM/QSPI/OCTOSPI/FMC/SDMMC), RTOS task design, flash/RAM optimization, XIP/SWD/JTAG debug, compiler pitfall detection (volatile/LTO/aliasing/cache), or industrial firmware for automotive, factory automation, harsh environments. Also: STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts (.ld + scatter), startup code, fault handlers, OTA/IAP/dual-bank bootloaders, secure boot/RDP/PCROP/OTFDEC, TrustZone-M (SAU/GTZC/MPCBB/CMSE), power modes/sleep/LPTIM/RTC wakeup, automotive diagnostics (UDS ISO 14229, J1939, OBD-II SAE J1979, WWH-OBD ISO 27145, DoIP ISO 13400, Modbus RTU), BLE (BlueNRG, BlueNRG-LP/LPS, STM32WB0), USB device/host (CDC-ACM/HID/MSC + TinyUSB), Ethernet/LwIP, errata cross-check.
+description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F2/F3/F4/F7/G0/G4/H5/H7/H7RS/L0/L1/L4/L5/U0/U5/WB/WBA/N6) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX, Zephyr). Trigger for peripheral drivers (I2C/SPI/UART/CAN/FDCAN/DMA/ADC/Timer/HRTIM/QSPI/OCTOSPI/FMC/SDMMC), RTOS task design, flash/RAM optimization, XIP/SWD/JTAG debug, compiler pitfall detection (volatile/LTO/aliasing/cache), or industrial firmware for automotive, factory automation, harsh environments. Also: STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts (.ld + scatter), startup code, fault handlers, OTA/IAP/dual-bank bootloaders, secure boot/RDP/PCROP/OTFDEC, TrustZone-M (SAU/GTZC/MPCBB/CMSE), power modes/sleep/LPTIM/RTC wakeup, automotive diagnostics (UDS ISO 14229, J1939, OBD-II SAE J1979, WWH-OBD ISO 27145, DoIP ISO 13400, Modbus RTU), BLE (BlueNRG, BlueNRG-LP/LPS/355), USB device/host (CDC-ACM/HID/MSC + TinyUSB), Ethernet/LwIP, errata cross-check.
 ---
 
 # STM32 Embedded Development Skill
@@ -46,9 +46,10 @@ coverage gap mid-task.
 **Procedure (do not skip steps; this is itself an authoritative pipeline):**
 
 1. **Scope & identify.** Family, concrete order codes + decode, silicon
-   generation/cuts. **Check for rebrand/migration** of an existing part — ST
-   frequently re-homes silicon (e.g. *BlueNRG-LP/LPS → STM32WB0x*). If so, map
-   old↔new explicitly; it drives where the canonical SDK lives.
+   generation/cuts. **Check for rebrand/order-code aliases** of an existing part
+   — ST often ships the same silicon under multiple order-code families (e.g.
+   *BlueNRG-LP = BlueNRG-355*). If so, map them explicitly; it drives where the
+   canonical SDK lives.
 2. **GitHub catalog FIRST.** `gh repo list STMicroelectronics --limit 1000`,
    `gh search repos`, `gh search code '<symbol>' --owner=STMicroelectronics`.
    Find: the official Cube package, HAL driver repo, CMSIS device repo, BLE/RTOS
@@ -1922,7 +1923,7 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB host (TinyUSB MSC) + FatFS/LittleFS, RTOS-safe file I/O |
 | [ref-ethernet-lwip.md](ref-ethernet-lwip.md) | STM32H5/H7 ETH, LwIP raw/netconn/socket, DHCP, TCP patterns |
 | [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) | BlueNRG-355 BLE: PHY, MTU, throughput, security, OTA |
-| [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) | BlueNRG-LP/LPS SoC + STM32WB0: memory map (0x10040000), power modes, radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), BLE stack API (WB0 vs legacy) |
+| [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) | BlueNRG-LP/LPS/355 SoC: memory map (0x10040000), power modes, radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), BLE stack API (BLE_STACK_*/aci_gatt_srv_* vs network-coprocessor BTLE_StackTick) — verified vs STSW-BNRGLP-DK v1.5.0 |
 
 ### Automotive / Diagnostic Stack
 | File | Contents |

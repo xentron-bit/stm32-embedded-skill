@@ -52,11 +52,11 @@
 | Part | Core | Flash/RAM | BLE | PHY | Özellikler | SDK |
 |------|------|-----------|-----|-----|------------|-----|
 | **BlueNRG-355** | Cortex-M0+ 64MHz | 512KB / 64KB | 5.4 | 1M, **2M**, Coded | Extended Adv, LE Audio hazır, PKA, AES | [x-cube-blemgr](https://github.com/STMicroelectronics/x-cube-blemgr) |
-| BlueNRG-LP | Cortex-M0+ 64MHz | 256KB / 64KB·32KB | **5.2** | 1M, 2M, Coded | Long Range, PKA, AES, ROM bootloader; → STM32WB0 | [STM32CubeWB0](https://github.com/STMicroelectronics/STM32CubeWB0) / legacy STSW-BNRGLP-DK |
-| BlueNRG-LPS | Cortex-M0+ **64MHz** | 192KB / 24KB | **5.3** | 1M, 2M, Coded | Küçük paket, **AoA/AoD direction-finding**, ES0576 | [STM32CubeWB0](https://github.com/STMicroelectronics/STM32CubeWB0) / legacy STSW-BNRGLP-DK |
+| BlueNRG-LP | Cortex-M0+ 64MHz | 256KB / 64KB·32KB | **5.2** | 1M, 2M, Coded | Long Range, PKA, AES, ROM bootloader | STSW-BNRGLP-DK |
+| BlueNRG-LPS | Cortex-M0+ **64MHz** | 192KB / 24KB | **5.3** | 1M, 2M, Coded | Küçük paket, **AoA/AoD direction-finding**, ES0576 | STSW-BNRGLP-DK |
 | BlueNRG-2 | Cortex-M0  | 256KB / 24KB | 5.0 | 1M sınırlı | Eski nesil | [x-cube-ble2](https://github.com/STMicroelectronics/x-cube-ble2) |
 
-> **BlueNRG-LP / LPS (SoC katmanı):** part decode, bellek haritası (Flash @0x10040000), güç modları (DeepStop/Shutdown), radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), STM32WB0 eşlemesi → [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md). BlueNRG-LP/LPS silikonu STM32 portföyüne **STM32WB0x** (WB05≈LPS, WB09≈LP) olarak taşınmıştır; yeni tasarımda `STM32CubeWB0` kullan.
+> **BlueNRG-LP / LPS / 355 (SoC katmanı):** part decode, bellek haritası (Flash @0x10040000), güç modları (DeepStop/Shutdown), radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), BLE stack API → [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md). Kanonik SDK: **STSW-BNRGLP-DK** (BLE stack v3.2a).
 
 **BlueNRG-355 Temel Farklar:**
 - `aci_gap_set_extended_advertising_enable()` — Extended Advertising (BLE 5.0+)
