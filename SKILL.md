@@ -1,6 +1,6 @@
 ---
 name: stm32-embedded-dev
-description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F2/F3/F4/F7/G0/G4/H5/H7/H7RS/L0/L1/L4/L5/U0/U5/WB/WBA/N6) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX, Zephyr). Trigger for peripheral drivers (I2C/SPI/UART/CAN/FDCAN/DMA/ADC/Timer/HRTIM/QSPI/OCTOSPI/FMC/SDMMC), RTOS task design, flash/RAM optimization, XIP/SWD/JTAG debug, compiler pitfall detection (volatile/LTO/aliasing/cache), or industrial firmware for automotive, factory automation, harsh environments. Also: STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts (.ld + scatter), startup code, fault handlers, OTA/IAP/dual-bank bootloaders, secure boot/RDP/PCROP/OTFDEC, TrustZone-M (SAU/GTZC/MPCBB/CMSE), power modes/sleep/LPTIM/RTC wakeup, automotive diagnostics (UDS ISO 14229, J1939, OBD-II SAE J1979, WWH-OBD ISO 27145, DoIP ISO 13400, Modbus RTU), BLE (BlueNRG), USB device/host (CDC-ACM/HID/MSC + TinyUSB), Ethernet/LwIP, errata cross-check.
+description: Use when developing, reviewing, or debugging firmware for STM32 microcontrollers (STM32F0/F1/F2/F3/F4/F7/G0/G4/H5/H7/H7RS/L0/L1/L4/L5/U0/U5/WB/WBA/N6) in bare-metal or RTOS environments (FreeRTOS, Keil RTX5/CMSIS-RTOS2, ThreadX, Zephyr). Trigger for peripheral drivers (I2C/SPI/UART/CAN/FDCAN/DMA/ADC/Timer/HRTIM/QSPI/OCTOSPI/FMC/SDMMC), RTOS task design, flash/RAM optimization, XIP/SWD/JTAG debug, compiler pitfall detection (volatile/LTO/aliasing/cache), or industrial firmware for automotive, factory automation, harsh environments. Also: STM32CubeMX/HAL/LL, Keil MDK, STM32CubeIDE, linker scripts (.ld + scatter), startup code, fault handlers, OTA/IAP/dual-bank bootloaders, secure boot/RDP/PCROP/OTFDEC, TrustZone-M (SAU/GTZC/MPCBB/CMSE), power modes/sleep/LPTIM/RTC wakeup, automotive diagnostics (UDS ISO 14229, J1939, OBD-II SAE J1979, WWH-OBD ISO 27145, DoIP ISO 13400, Modbus RTU), BLE (BlueNRG, BlueNRG-LP/LPS, STM32WB0), USB device/host (CDC-ACM/HID/MSC + TinyUSB), Ethernet/LwIP, errata cross-check.
 ---
 
 # STM32 Embedded Development Skill
@@ -31,6 +31,66 @@ and `gh` command recipes.
 
 ---
 
+## 🆕 Self-Update — Adding a New ST Device / Family (Mode E)
+
+**This skill extends itself.** When you meet an ST MCU/SoC the skill does not
+yet cover — no matching `ref-*.md`, missing from [stm32-families.md](stm32-families.md),
+absent from the errata table in [CLAUDE.md](CLAUDE.md) — do **not** answer from
+memory. Run this procedure to research it GitHub-first and **add a new reference
+file + register it** in the canonical indexes.
+
+**Trigger:** "add support for <part>", "<part> diye bir şey var, ekle", a review/
+implement request for a family not in the Reference Files table, or you notice a
+coverage gap mid-task.
+
+**Procedure (do not skip steps; this is itself an authoritative pipeline):**
+
+1. **Scope & identify.** Family, concrete order codes + decode, silicon
+   generation/cuts. **Check for rebrand/migration** of an existing part — ST
+   frequently re-homes silicon (e.g. *BlueNRG-LP/LPS → STM32WB0x*). If so, map
+   old↔new explicitly; it drives where the canonical SDK lives.
+2. **GitHub catalog FIRST.** `gh repo list STMicroelectronics --limit 1000`,
+   `gh search repos`, `gh search code '<symbol>' --owner=STMicroelectronics`.
+   Find: the official Cube package, HAL driver repo, CMSIS device repo, BLE/RTOS
+   middleware, example projects. Note the **canonical active repo** and any
+   community mirrors for legacy/installer-only SDKs (an official "DK" may not be
+   on ST's GitHub — say so).
+3. **Authoritative docs.** Datasheet (DS), reference manual (RM), programming
+   manual (PM), **errata (ES)**, **security advisories (SA)**, and the key
+   application notes (AN). If web fetch is blocked/times out (st.com often does),
+   **ASK THE USER to drop the PDFs in a folder** and `Read` them locally — do not
+   guess specs.
+4. **Extract verified facts.** Memory map (don't assume `0x08000000`!), part
+   decode, peripherals, power modes + wakeup sources, **every erratum + its
+   workaround**, security advisories, toolchain, flashing path. Tag anything you
+   could not confirm `UNVERIFIED — needs datasheet check`. Cite DS/RM/ES/AN
+   numbers and `owner/repo:path` for code.
+5. **Write `ref-<name>.md`** matching the house format: `@trust-header v1` block,
+   a **source-document catalog table**, `## INDEX` with anchor links, Roman-
+   numeral sections, dense tables, and a closing **"Olmaz sa Olmaz"** checklist.
+   Cross-link sister refs and **do not duplicate** generic content (link instead).
+6. **Register in ALL canonical indexes** (single-source rule):
+   - [SKILL.md](SKILL.md) §"Reference Files" — add the row in the right subsection.
+   - [SKILL.md](SKILL.md) frontmatter `description` — add trigger keywords so the
+     skill activates for the new part. (Mirror into the deployed skill metadata.)
+   - [stm32-families.md](stm32-families.md) — family/catalog row + CMSIS/HAL repo links.
+   - [CLAUDE.md](CLAUDE.md) errata table — `family → ES####`, plus any SA advisory.
+7. **Verify.** Cross-links resolve, errata + security captured, `gh` recipes run,
+   no uncited hard claims. Fix wrong pre-existing rows you find (e.g. stale BLE
+   version, wrong SDK link).
+8. **Offer to commit** only if the user asks (`git` is used in this repo).
+
+**Worked example:** the BlueNRG-LP/LPS addition →
+[ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) (GitHub-first research, user-supplied
+ST PDFs for errata/RM/AN, registered in all four indexes above). Use it as the
+template for the next device.
+
+**Principles:** GitHub-first (cite, never memorize APIs) · authoritative PDFs for
+DS/ES/SA (ask the user if the web blocks you) · mark UNVERIFIED, never assert
+uncertain facts · always map rebrands/migrations.
+
+---
+
 ## ⚡ Quick Start — Operating Modes (READ FIRST)
 
 When this skill is invoked, **identify the mode first**, then follow the matching procedure.
@@ -42,6 +102,7 @@ When this skill is invoked, **identify the mode first**, then follow the matchin
 | **B+. Deep Project Review** | "Analyze my project", "Is there a bug here?", "Review this repo", project directory pointed to | **9-phase reference-benchmarked pipeline below** — DO NOT skip any phase | Findings with confidence + reference citations | Until pipeline complete |
 | **C. Implement new feature** | "Write a driver for...", "Add OTA..." | (1) Context interview if ambiguous (2) 5-phase summary (3) Code with errata notes inline | Code + 5-phase summary | ≤30 lines summary + code |
 | **D. Debug** | "Why does X not work?", "HardFault at ..." | (1) Ask for fault dump / debug info (2) Decode CFSR/BFAR (3) Walk root cause | Q&A + decoded fields | Until root cause found |
+| **E. Self-Update** | New/uncovered ST part ("add support for…", coverage gap) | **Self-Update pipeline** (§🆕 above): GitHub-first research → write `ref-*.md` → register in all indexes | New reference file + index edits | Until reference written + registered |
 
 ### Mandatory Finding Template (Mode B / B+ / D)
 
@@ -97,6 +158,9 @@ User request
    │
    ▼
 4. Mode = D (debug)?  ──► Walk fault dump / CFSR. Ask for missing data.
+   │
+   ▼
+5. Mode = E (new/uncovered ST part)? ──► Run Self-Update pipeline (§🆕). Research GitHub-first, write ref-*.md, register in all indexes.
 ```
 
 ### Response language
@@ -1858,6 +1922,7 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB host (TinyUSB MSC) + FatFS/LittleFS, RTOS-safe file I/O |
 | [ref-ethernet-lwip.md](ref-ethernet-lwip.md) | STM32H5/H7 ETH, LwIP raw/netconn/socket, DHCP, TCP patterns |
 | [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) | BlueNRG-355 BLE: PHY, MTU, throughput, security, OTA |
+| [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) | BlueNRG-LP/LPS SoC + STM32WB0: memory map (0x10040000), power modes, radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), BLE stack API (WB0 vs legacy) |
 
 ### Automotive / Diagnostic Stack
 | File | Contents |
