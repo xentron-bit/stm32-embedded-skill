@@ -541,12 +541,20 @@ auth kontrolü gerek." ASLA ezbere review'a düşme.
 **Pre-gate:** `[ -s .claude-cache/refs-discovery.json ] && find .claude-cache/refs -name '*.c' | head -1 | grep -q .` — geçmezse Faz 3'e geri dön.
 
 ```bash
-# graphify komutu yoksa ZORUNLU install (skip fallback YOK)
-command -v graphify >/dev/null 2>&1 || {
-    pip3 install --user graphifyy \
-      || { echo "FAZ 4 FAIL: graphifyy install başarısız"; exit 1; }
-    export PATH="$HOME/.local/bin:$PATH"
-}
+# Graphify — Tool Bootstrap: detect → ASK permission → install; if present → update check.
+# Binary is `graphify` (pip package: graphifyy). NEVER force-install silently.
+if command -v graphify >/dev/null 2>&1; then
+    # PRESENT → update check (offer upgrade WITH permission; never auto-upgrade)
+    if python3 -m pip list --outdated 2>/dev/null | grep -iq '^graphifyy '; then
+        echo "graphify update available — ASK the user before: pip install --upgrade graphifyy"
+    fi
+else
+    # MISSING → explain what graphify does + why, ASK the user, then on approval:
+    #   pip install graphifyy   (macOS: Homebrew python; ensure ~/.local/bin on PATH)
+    # If the user DECLINES → do NOT exit-fail; tell them the ≥3-file graph review needs
+    # graphify and offer a reduced (no-graph) review instead. Detection: `command -v graphify`.
+    echo "graphify missing → ASK permission, then: pip install graphifyy  (decline → reduced review)"
+fi
 
 # Vendor isimlerini SIGNAL olarak tut (Mode B'deki filter'ın TERSİ)
 graphify .claude-cache/refs --no-viz \
@@ -1495,12 +1503,16 @@ Before declaring firmware "done for production":
    - EXISTS → Read it, jump to Step 2
    - MISSING → run graphify:
        Bash: graphify update .   (run from project root — DEFAULT, AST-only, no LLM)
-     If `graphify` command is missing, install:
-       macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
-       Linux  : pip3 install --user graphifyy
-       Windows: py -m pip install graphifyy
-     Install MUST succeed; if pip3 fails, retry with python3 -m pip install --user graphifyy.
-     If even retry fails, ABORT the review — do NOT fall back to memory.
+     Graphify presence — Tool Bootstrap (detect `graphify` binary → ASK → install):
+       • PRESENT → update check: `python3 -m pip list --outdated | grep -i '^graphifyy '`
+                   → if a newer version exists, tell the user and OFFER (don't auto-run):
+                     `pip install --upgrade graphifyy`
+       • MISSING → explain graphify + ASK the user's permission, then install on approval:
+                     macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
+                     Linux  : pip3 install --user graphifyy   (fallback: python3 -m pip install --user graphifyy)
+                     Windows: py -m pip install graphifyy
+                   Verify with `command -v graphify`. If the user DECLINES → do a reduced
+                   (no-graph) review and say so — do NOT install silently, do NOT fall back to memory unannounced.
 
    ⚠️ **graphify CLI subcommand kullan — `graphify .` formu YOK:**
      • `graphify update <path>`  → AST-only, LLM key gerekmez (DEFAULT)
