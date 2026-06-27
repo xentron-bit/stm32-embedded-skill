@@ -779,6 +779,29 @@ Sadece Faz 7'den "CANDIDATE BUG" işaretli divergence'ları al. Her biri için:
 4. Bug muhtemel ise: Finding Template'e yaz (severity + confidence + `at: file:line`)
 5. False positive ise: kaydet ama emit etme (cache for next run)
 
+#### 🚫 False-Positive Avoidance Gate — her CRITICAL/HIGH bulgudan ÖNCE (ZORUNLU)
+
+> Gerçek bir audit, bu kontroller olmadan high-severity bulguların **~%28'ini
+> over-claim etti** (false-positive/abartılı). Bir CRITICAL/HIGH emit etmeden önce:
+
+1. **Cache / DMA-coherency iddiası mı?** → linker **`.map`**'i oku (buffer adresi +
+   hizası), **MPU config**'i oku (bölge CACHEABLE mı?), scatter/section'a bak. Cache
+   maintenance "overrun" **yalnızca CACHEABLE belleğe ulaşırsa** bozulmadır; buffer MPU
+   non-cacheable bölgedeyse op'lar zararsız no-op'tur, corruption değil.
+2. **Frekans / timing iddiası mı?** → tüm clock tree'yi **HESAPLA**: `HSE_VALUE`'yu
+   doğrula (`*_hal_conf.h` — kristali VARSAYMA) → PLL(M/N/P) → SYSCLK → AHB/APB böler →
+   peripheral clock **mux**'ı → prescaler. Hesaplamadığın bir saati asla yazma.
+3. **Severity veriyor musun?** → dosya/sembol **build'de mi** teyit et (`.uvprojx`/
+   `.cproject` source listesi, `.map`). Dead/derlenmeyen kod → "dead" not düş, live-CRITICAL skorlama.
+4. **Bir peripheral sınıfının çoklu instance'ı mı** (2 flash, 3 CAN, 2 SPI)? → her
+   config'in **HANGİ chip/instance**'a ait olduğunu (part `#define`/header) önce belirle.
+5. **Dizi-dışı index mi?** → struct layout'a bak: kasıtlı komşu alana (terminator/sentinel)
+   düşen index mevcut config'de kasıtlı olabilir, OOB değil.
+
+**Verifier'ı da doğrula:** Bir karşı-inceleme bir bulguyu çürütürse ona da körü körüne
+güvenme — çürütmeyi de kaynağa karşı yeniden doğrula (çürütme de yanlış olabilir).
+Her iddia VE karşı-iddia kaynağa dayanır. (Bkz. CLAUDE.md §"Fact-Based / No-Guess".)
+
 **ZORUNLU: Rapor diske yazılır.** Final output sadece chat'e basılmaz —
 `Write` tool ile şuraya kaydedilir:
 ```
