@@ -236,7 +236,7 @@ Run this before signing off on a production-line key strategy:
 | Master OEM private key on programmer host | Keys live only on ST33 HSM | `STM32TrustedPackageCreator -info hsm` shows slots, never raw key |
 | JTAG/SWD readback in field | RDP=1 + DBGAUTH (M33) / RDP=2 (legacy) | Field unit: attempt unauthorized `STM32_Programmer_CLI -ob displ` → expected to fail |
 | Programmer station impersonation | SCP03 channel HSM ↔ programmer | Use ST-signed programmer build, verify signature before deploy |
-| Per-device key recovery via side-channel | Use RSS-derived key, masking (see [ref-sca-countermeasures.md](ref-sca-countermeasures.md) Phase 3) | DPA assessment on production silicon |
+| Per-device key recovery via side-channel | Use RSS-derived key + DPA/SCA countermeasures (constant-time crypto, masking, hiding) | DPA assessment on production silicon |
 | Replay of an old signed firmware | Anti-rollback monotonic counter | See [ref-secure-boot.md](ref-secure-boot.md) §"Anti-Rollback" |
 | Compromised CM operator | Slot-counter on HSM; dual control on card issuance | Slot count ≤ batch size |
 | OBK area not actually written | Post-program verify via `STM32_Programmer_CLI -obk read` | Production line test step |
