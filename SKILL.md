@@ -1934,8 +1934,7 @@ See [stm32-families.md](stm32-families.md) for:
 | [ref-usb-device.md](ref-usb-device.md) | USB device stack: CDC-ACM, HID, MSC, descriptors, endpoints |
 | [ref-usb-host-filesystem.md](ref-usb-host-filesystem.md) | USB host (TinyUSB MSC) + FatFS/LittleFS, RTOS-safe file I/O |
 | [ref-ethernet-lwip.md](ref-ethernet-lwip.md) | STM32H5/H7 ETH, LwIP raw/netconn/socket, DHCP, TCP patterns |
-| [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md) | BlueNRG-355 BLE: PHY, MTU, throughput, security, OTA |
-| [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) | BlueNRG-LP/LPS/355 SoC: memory map (0x10040000), power modes, radio/virtual timer, OTA, secure bootloader (SA0041), errata (ES0576), BLE stack API (BLE_STACK_*/aci_gatt_srv_* vs network-coprocessor BTLE_StackTick) — verified vs STSW-BNRGLP-DK v1.5.0 |
+| [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) | **BlueNRG-LP/LPS/355 — tek kanonik BLE referansı** (eski ref-ble-bluenrg355.md 2026-06-16'da birleştirildi). **Part A** SoC/silikon: memory map (0x10040000), power modes, radio/virtual timer, OTA (Reset/Service Manager), secure bootloader (SA0041), errata (ES0576), BLE stack API (BLE_STACK_*/aci_gatt_srv_* vs network-coprocessor BTLE_StackTick) — verified vs STSW-BNRGLP-DK v1.5.0. **Part B** protokol/app: PHY, MTU, throughput, conn params, iOS/Android, reconnect, security-manager, GATT profile, DMA, RF coex |
 
 ### Automotive / Diagnostic Stack
 | File | Contents |

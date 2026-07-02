@@ -51,8 +51,7 @@
 
 | Part | Core | Flash/RAM | BLE | PHY | Özellikler | SDK |
 |------|------|-----------|-----|-----|------------|-----|
-| **BlueNRG-355** | Cortex-M0+ 64MHz | 512KB / 64KB | 5.4 | 1M, **2M**, Coded | Extended Adv, LE Audio hazır, PKA, AES | [x-cube-blemgr](https://github.com/STMicroelectronics/x-cube-blemgr) |
-| BlueNRG-LP | Cortex-M0+ 64MHz | 256KB / 64KB·32KB | **5.2** | 1M, 2M, Coded | Long Range, PKA, AES, ROM bootloader | STSW-BNRGLP-DK |
+| **BlueNRG-LP** (= -345 / -355 order-code, aynı silikon) | Cortex-M0+ 64MHz | 256KB / 64KB·32KB | **5.2** | 1M, 2M, Coded | Long Range, Extended Adv, PKA, AES, ROM bootloader; app middleware: x-cube-blemgr | STSW-BNRGLP-DK |
 | BlueNRG-LPS | Cortex-M0+ **64MHz** | 192KB / 24KB | **5.3** | 1M, 2M, Coded | Küçük paket, **AoA/AoD direction-finding**, ES0576 | STSW-BNRGLP-DK |
 | BlueNRG-2 | Cortex-M0  | 256KB / 24KB | 5.0 | 1M sınırlı | Eski nesil | [x-cube-ble2](https://github.com/STMicroelectronics/x-cube-ble2) |
 
@@ -64,7 +63,7 @@
 - Coded PHY (S=2 veya S=8): uzun menzil, düşük hız
 - MTU: HCI `ACI_ATT_EXCHANGE_MTU_REQ` + `aci_gatt_update_char_value_ext()` ile 247 byte payload
 - `ACI_L2CAP_CONNECTION_PARAMETER_UPDATE_REQ` — bağlantı parametresi güncelleme
-- BLE Manager middleware: `x-cube-blemgr` (referans: [ref-ble-bluenrg355.md](ref-ble-bluenrg355.md))
+- BLE Manager middleware: `x-cube-blemgr` (referans: [ref-ble-bluenrg-lp.md](ref-ble-bluenrg-lp.md) **Part B**)
 
 **HSE Kalibrasyon (BlueNRG-LP/355):**
 ```c
