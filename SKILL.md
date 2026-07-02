@@ -12,7 +12,8 @@ This skill does **not** memorize HAL/CMSIS API. Memorization causes drift
 
 | Knowledge layer | Where to fetch from | Don't memorize, don't trust ref-md |
 |-----------------|---------------------|------------------------------------|
-| **L1 — HAL / peripheral / startup / linker** | `gh search code '<symbol>' --owner=STMicroelectronics --extension=c` | ✓ Always verify HAL names via gh |
+| **L0 — Library & VERSION (do this FIRST)** | Project: `.uvprojx`/`.cproject`/`*.csolution.yml` (pack/DFP + `STM32Cube_FW_*` ver), `*_hal_conf.h`, HAL `Release_Notes`/`@version`, `Middlewares/*/Release_Notes`, RTX `RTX_Config.h` | ✓ APIs are version-specific — detect the exact HAL/RTOS version before any API advice (CLAUDE.md §"Phase 0" + "Fact-Based / No-Guess") |
+| **L1 — HAL / peripheral / startup / linker** | `gh search code '<symbol>' --owner=STMicroelectronics --extension=c` (pin to the detected pack/tag) | ✓ Always verify HAL names via gh; never assert a symbol not confirmed in the detected version |
 | **L2 — RTOS (RTX5 + FreeRTOS)** | `gh search code '<symbol>' --owner=ARM-software` (RTX5) / `--owner=FreeRTOS` / `--owner=STMicroelectronics` (ST's port) | ✓ Always verify RTOS API |
 | **L3 — Protocols (J1939/UDS/OBD/DoIP/Modbus)** | Spec PDFs (ISO/SAE, paid). Ref-md is the trusted in-repo source. | Only place ref-md is authoritative |
 | **L4 — Design / strategy / errata** | ref-md only. Task ladders, ISR patterns, stack sizing, errata workarounds, decision trees. | Only place ref-md is authoritative |
@@ -95,6 +96,13 @@ uncertain facts · always map rebrands/migrations.
 ## ⚡ Quick Start — Operating Modes (READ FIRST)
 
 When this skill is invoked, **identify the mode first**, then follow the matching procedure.
+
+> **🌐 Output-language rule (mandatory):** Mirror the user's language. Write ALL prose —
+> explanations, findings, reviews, summaries, and **generated reports (incl. PDF)** — in
+> the language the user is writing to you in (user writes Turkish → reply + reports in
+> Turkish; English → English). Keep code, identifiers, file paths, commit messages, log
+> excerpts, ST/ARM citations, and committed `ref-*.md` content **as-is** — never translate
+> code or symbols. When unsure, match the user's most recent message.
 
 | Mode | Trigger | Procedure | Output shape | Max length |
 |------|---------|-----------|--------------|------------|
@@ -191,6 +199,15 @@ divergences from authoritative patterns — those are bug candidates.
 "skip-some-phases" mode. The phases are minimum-viable for a trustworthy
 bug-hunt output. Phases are tested step-by-step but never dropped.
 
+> **🔒 Graphify-First Gate (mandatory):** For ≥3 `.c` file / project analysis, BUILD
+> the graphify code-map FIRST (`graphify update <project>` → verify
+> `<project>/graphify-out/graph.json` on disk) BEFORE any findings, file-by-file
+> reading, or subagent review. Do NOT bypass graphify with direct full-file reads or
+> parallel subagents — that discards the call-graph diff and the token saving. **Use the
+> output (query-first):** read `GRAPH_REPORT.md` god nodes + surprising connections, then
+> `graphify query`/`affected`/`path` → walk node → `file:line` → verify. See CLAUDE.md
+> §"Graphify-First Gate" + [ref-graphify.md](ref-graphify.md).
+
 ### 🔒 Hard Gates — Mandatory Disk-Verified Artifacts
 
 Each phase produces a file on disk. The next phase MUST verify it exists
@@ -201,15 +218,15 @@ a clear message — NEVER falls back to memory-based review.
 |-------------|-----------------|----------------|---------|
 | Faz 3 | `.claude-cache/refs/**/*.c` exists | `find .claude-cache/refs -name '*.c' \| head -1 \| grep -q .` | ABORT |
 | Faz 3 | `.claude-cache/refs/<repo>/.pinned-sha` | `[ -f .claude-cache/refs/*/. pinned-sha ]` | ABORT |
-| Faz 4 | `.claude-cache/refs-graph.json` | `[ -s .claude-cache/refs-graph.json ]` | ABORT |
-| Faz 5 | `graphify-out/user-graph-full.json` | `[ -s graphify-out/user-graph-full.json ]` | ABORT |
+| Faz 4 | `.claude-cache/refs/graphify-out/graph.json` | `[ -s .claude-cache/refs/graphify-out/graph.json ]` | ABORT |
+| Faz 5 | `<user-project>/graphify-out/graph.json` | `[ -s <user-project>/graphify-out/graph.json ]` | ABORT |
 | Faz 8 | `<project>/STM32_REVIEW_<YYYY-MM-DD>.md` | `[ -f <project>/STM32_REVIEW_*.md ]` | ABORT |
 
 **Citation-Mandatory rule (applies from Faz 6 onward):**
 Every finding line MUST include `at: <file>:<line>` referencing actual
 bytes on disk. Before emitting "X is missing" / "Y is wrong":
 1. `grep -rn "<symbol>" <user-project>` → if found elsewhere, finding is CANCELLED (mark "verified-present")
-2. `graphify query "<symbol>" --graph graphify-out/user-graph-full.json` → if defined, finding is CANCELLED
+2. `graphify query "<symbol>" --graph <user-project>/graphify-out/graph.json` → if defined, finding is CANCELLED
 3. HAL/LL behavior claims MUST cite `.claude-cache/refs/<path>:<line>` — never from memory
 
 Findings without ≥1 ST-repo or user-code citation are FORBIDDEN.
@@ -358,6 +375,29 @@ grep -h 'arm-none-eabi-gcc\|armclang\|armcc' <project>/Makefile <project>/**/Mak
 
 Sonuç **part-number granülarite** olmalı (`STM32H730VBT6`, sadece "H7" yetmez).
 Belirleyemezsen → kullanıcıya sor: "MCU part-number ve silikon revizyonu (rev V/Y/X)?"
+
+#### Faz 1b — Library & VERSION Detection (no-guess gate) 🔬
+
+MCU yetmez — **kullanılan kütüphanelerin tam sürümünü** de tespit et. API'ler sürüme
+bağlıdır; bir CubeH7 sürümünde olan fonksiyon başka sürümde olmayabilir.
+
+```bash
+grep -rohE 'STM32Cube_FW_[A-Z0-9]+_V[0-9.]+' <project> | sort -u        # → STM32Cube_FW_H7_V1.12.1
+grep -oE 'Keil\.STM32[A-Za-z0-9]+_DFP\.[0-9.]+' <project>/**/*.uvprojx  # → Keil.STM32H7xx_DFP.4.1.0
+ls -d <project>/Drivers/STM32*xx_HAL_Driver 2>/dev/null && echo DISK || echo PACK-MANAGED
+```
+
+**No-Guess gate (ZORUNLU):** Bir HAL/LL/middleware sembolünü "var" diye sunmadan ÖNCE,
+tespit edilen sürümde **var olduğunu doğrula**. Pack-managed ise (disk'te yoksa) otoriter
+ST kaynağından — submodule SHA'yı çözüp driver repo'sunda grep'le:
+
+```bash
+SHA=$(gh api "repos/STMicroelectronics/STM32CubeH7/contents/Drivers/STM32H7xx_HAL_Driver?ref=v1.12.1" --jq '.sha')
+DL=$(gh api "repos/STMicroelectronics/stm32h7xx_hal_driver/contents/Src/stm32h7xx_hal_ospi.c?ref=$SHA" --jq '.download_url')
+curl -fsSL "$DL" | grep -c 'HAL_OSPI_DLYB_Cfg'    # 0 → o sürümde YOK
+```
+> Gerçek vaka: `HAL_OSPI_DLYB_Cfg` STM32H7 HAL'de **hiç yok**. Doğrulanamıyorsa "emin
+> değilim" de, otoriter kaynaktan çek, sonra öner. Bkz. [CLAUDE.md](CLAUDE.md) §"Phase 0".
 
 ### Faz 1.5 — Project Purpose Understanding ★
 
@@ -611,21 +651,29 @@ auth kontrolü gerek." ASLA ezbere review'a düşme.
 **Pre-gate:** `[ -s .claude-cache/refs-discovery.json ] && find .claude-cache/refs -name '*.c' | head -1 | grep -q .` — geçmezse Faz 3'e geri dön.
 
 ```bash
-# graphify komutu yoksa ZORUNLU install (skip fallback YOK)
-command -v graphify >/dev/null 2>&1 || {
-    pip3 install --user graphifyy \
-      || { echo "FAZ 4 FAIL: graphifyy install başarısız"; exit 1; }
-    export PATH="$HOME/.local/bin:$PATH"
-}
+# Graphify — Tool Bootstrap: detect → ASK permission → install; if present → update check.
+# Binary is `graphify` (pip package: graphifyy). NEVER force-install silently.
+if command -v graphify >/dev/null 2>&1; then
+    # PRESENT → update check (offer upgrade WITH permission; never auto-upgrade)
+    if python3 -m pip list --outdated 2>/dev/null | grep -iq '^graphifyy '; then
+        echo "graphify update available — ASK the user before: pip install --upgrade graphifyy"
+    fi
+else
+    # MISSING → explain what graphify does + why, ASK the user, then on approval:
+    #   pip install graphifyy   (macOS: Homebrew python; ensure ~/.local/bin on PATH)
+    # If the user DECLINES → do NOT exit-fail; tell them the ≥3-file graph review needs
+    # graphify and offer a reduced (no-graph) review instead. Detection: `command -v graphify`.
+    echo "graphify missing → ASK permission, then: pip install graphifyy  (decline → reduced review)"
+fi
 
-# Vendor isimlerini SIGNAL olarak tut (Mode B'deki filter'ın TERSİ)
-graphify .claude-cache/refs --no-viz \
-    --include-pattern='HAL_*|LL_*|BSP_*|SCB_*|__NVIC_*|__HAL_RCC_*' \
-    --out .claude-cache/refs-graph.json
+# v0.8.39 CLI: `graphify update <dir>` (AST-only, LLM gerekmez) → <dir>/graphify-out/graph.json
+# (v0.8.39'da --include-pattern / --out <file> / --no-viz (update'te) YOK; dir başına tek graf.
+#  HAL/LL/BSP sinyallerini build'de değil, sonra `graphify query` ile daralt.)
+graphify update .claude-cache/refs
 
 # Post-gate: artifact diskte mi?
-[ -s .claude-cache/refs-graph.json ] \
-  || { echo "FAZ 4 FAIL: refs-graph.json üretilmedi"; exit 1; }
+[ -s .claude-cache/refs/graphify-out/graph.json ] \
+  || { echo "FAZ 4 FAIL: refs graph üretilmedi"; exit 1; }
 ```
 
 Çıktı: ST'nin kanonik HAL/LL kullanım örüntüsü.
@@ -636,15 +684,12 @@ graphify .claude-cache/refs --no-viz \
 
 #### 5.0 User MCU-interface graph
 ```bash
-graphify <user-project> --no-viz \
-    --include-pattern='HAL_*|LL_*|BSP_*|SCB_*|__NVIC_*|__HAL_RCC_*' \
-    --out graphify-out/user-graph-mcu.json
+# v0.8.39: dir başına tek graf <user-project>/graphify-out/graph.json
+# (mcu/full ayrımı + --include-pattern yok — sonra `graphify query`/`affected` ile daralt)
+graphify update <user-project>
 
-# Full graph da kaydet (Faz 8 manuel review için)
-graphify <user-project> --no-viz --out graphify-out/user-graph-full.json
-
-# Post-gate: her iki graph da diskte mi?
-[ -s graphify-out/user-graph-mcu.json ] && [ -s graphify-out/user-graph-full.json ] \
+# Post-gate: graph diskte mi?
+[ -s <user-project>/graphify-out/graph.json ] \
   || { echo "FAZ 5 FAIL: user graph üretilmedi"; exit 1; }
 ```
 
@@ -675,7 +720,7 @@ Her drift satırı → candidate finding.
 ```bash
 # graphify ile ISR ve task arasında paylaşılan değişken bul
 graphify query "shared variables between ISR handlers and tasks" \
-    --graph graphify-out/user-graph-full.json
+    --graph <user-project>/graphify-out/graph.json
 
 # Her shared var için doğrula:
 #   - `volatile` qualifier var mı?
@@ -798,11 +843,34 @@ Sadece Faz 7'den "CANDIDATE BUG" işaretli divergence'ları al. Her biri için:
 3. **Cross-file doğrulama (ZORUNLU):** Finding emit etmeden önce:
    ```bash
    grep -rn "<symbol>" <user-project>
-   graphify query "definitions of <symbol>" --graph graphify-out/user-graph-full.json
+   graphify query "definitions of <symbol>" --graph <user-project>/graphify-out/graph.json
    ```
    Symbol başka dosyada tanımlıysa → finding **iptal**, "verified-present"
 4. Bug muhtemel ise: Finding Template'e yaz (severity + confidence + `at: file:line`)
 5. False positive ise: kaydet ama emit etme (cache for next run)
+
+#### 🚫 False-Positive Avoidance Gate — her CRITICAL/HIGH bulgudan ÖNCE (ZORUNLU)
+
+> Gerçek bir audit, bu kontroller olmadan high-severity bulguların **~%28'ini
+> over-claim etti** (false-positive/abartılı). Bir CRITICAL/HIGH emit etmeden önce:
+
+1. **Cache / DMA-coherency iddiası mı?** → linker **`.map`**'i oku (buffer adresi +
+   hizası), **MPU config**'i oku (bölge CACHEABLE mı?), scatter/section'a bak. Cache
+   maintenance "overrun" **yalnızca CACHEABLE belleğe ulaşırsa** bozulmadır; buffer MPU
+   non-cacheable bölgedeyse op'lar zararsız no-op'tur, corruption değil.
+2. **Frekans / timing iddiası mı?** → tüm clock tree'yi **HESAPLA**: `HSE_VALUE`'yu
+   doğrula (`*_hal_conf.h` — kristali VARSAYMA) → PLL(M/N/P) → SYSCLK → AHB/APB böler →
+   peripheral clock **mux**'ı → prescaler. Hesaplamadığın bir saati asla yazma.
+3. **Severity veriyor musun?** → dosya/sembol **build'de mi** teyit et (`.uvprojx`/
+   `.cproject` source listesi, `.map`). Dead/derlenmeyen kod → "dead" not düş, live-CRITICAL skorlama.
+4. **Bir peripheral sınıfının çoklu instance'ı mı** (2 flash, 3 CAN, 2 SPI)? → her
+   config'in **HANGİ chip/instance**'a ait olduğunu (part `#define`/header) önce belirle.
+5. **Dizi-dışı index mi?** → struct layout'a bak: kasıtlı komşu alana (terminator/sentinel)
+   düşen index mevcut config'de kasıtlı olabilir, OOB değil.
+
+**Verifier'ı da doğrula:** Bir karşı-inceleme bir bulguyu çürütürse ona da körü körüne
+güvenme — çürütmeyi de kaynağa karşı yeniden doğrula (çürütme de yanlış olabilir).
+Her iddia VE karşı-iddia kaynağa dayanır. (Bkz. CLAUDE.md §"Fact-Based / No-Guess".)
 
 **ZORUNLU: Rapor diske yazılır.** Final output sadece chat'e basılmaz —
 `Write` tool ile şuraya kaydedilir:
@@ -1571,12 +1639,16 @@ Before declaring firmware "done for production":
    - EXISTS → Read it, jump to Step 2
    - MISSING → run graphify:
        Bash: graphify update .   (run from project root — DEFAULT, AST-only, no LLM)
-     If `graphify` command is missing, install:
-       macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
-       Linux  : pip3 install --user graphifyy
-       Windows: py -m pip install graphifyy
-     Install MUST succeed; if pip3 fails, retry with python3 -m pip install --user graphifyy.
-     If even retry fails, ABORT the review — do NOT fall back to memory.
+     Graphify presence — Tool Bootstrap (detect `graphify` binary → ASK → install):
+       • PRESENT → update check: `python3 -m pip list --outdated | grep -i '^graphifyy '`
+                   → if a newer version exists, tell the user and OFFER (don't auto-run):
+                     `pip install --upgrade graphifyy`
+       • MISSING → explain graphify + ASK the user's permission, then install on approval:
+                     macOS  : brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/pip3 install graphifyy
+                     Linux  : pip3 install --user graphifyy   (fallback: python3 -m pip install --user graphifyy)
+                     Windows: py -m pip install graphifyy
+                   Verify with `command -v graphify`. If the user DECLINES → do a reduced
+                   (no-graph) review and say so — do NOT install silently, do NOT fall back to memory unannounced.
 
    ⚠️ **graphify CLI subcommand kullan — `graphify .` formu YOK:**
      • `graphify update <path>`  → AST-only, LLM key gerekmez (DEFAULT)
@@ -1952,6 +2024,7 @@ See [stm32-families.md](stm32-families.md) for:
 |------|----------|
 | [ref-rtos-patterns.md](ref-rtos-patterns.md) | FreeRTOS periodic, ISR→task, mutex, event groups, RTX5 patterns |
 | [ref-keil-armclang.md](ref-keil-armclang.md) | Keil MDK / AC6: LTO traps, scatter, RTX5 pitfalls |
+| [ref-graphify.md](ref-graphify.md) | **Graphify: commands (update/extract/query/path/explain/affected) + how to USE the output (GRAPH_REPORT god nodes/surprising connections, query-first, EXTRACTED/INFERRED/AMBIGUOUS tags, token cut)** |
 | [ref-compiler-hardening.md](ref-compiler-hardening.md) | volatile, barriers, DMA cache, ISR reorder, LTO |
 | [ref-c-code-style.md](ref-c-code-style.md) | BARR-C:2018 / QuantumLeaps / NASA style — solid index |
 | [ref-arm-asm.md](ref-arm-asm.md) | Cortex-M assembly: AAPCS, intrinsics, DSP/SIMD, Thumb-2, naked ISR |

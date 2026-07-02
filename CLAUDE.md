@@ -15,6 +15,49 @@ Activates the 5-phase workflow: Analyze Constraints → Design Architecture →
 Implement Drivers → Optimize Resources → Test & Verify. See
 [SKILL.md](SKILL.md) §"Operating Modes" for the response-shape rules.
 
+## Output Language — mirror the user (mandatory) 🌐
+
+Write every response and **generated report (incl. PDF)** in the **language the user
+writes to you in** — user writes Turkish → reply + reports in Turkish; English →
+English. Keep code, identifiers, file paths, commit messages, log excerpts, ST/ARM
+citations, and committed `ref-*.md` content **as-is** (never translate code/symbols).
+When unsure, match the user's most recent message. See SKILL.md §"Operating Modes".
+
+## Phase 0 — Library & Version Detection (MANDATORY, before any API-specific advice) 🔬
+
+**Before** proposing any HAL/LL/CMSIS/RTOS/middleware API, macro, struct field, or
+enum, detect the **exact library and its version** the project actually uses — symbols
+are version-specific. Detect from `.uvprojx`/`.cproject`/`*.csolution.yml` (DFP/pack +
+`STM32Cube_FW_*` version), `*_hal_conf.h`, HAL `Release_Notes`/`@version`,
+`Middlewares/*/Release_Notes`, RTX `RTX_Config.h`. State what was detected; whether the
+HAL is on-disk or pack-managed.
+
+## Fact-Based / No-Guess Rule (overrides convenience) 🚫🔮
+
+- **Never present an API as available unless confirmed in the detected version** — by
+  reading on-disk source, `gh search code '<symbol>' --owner=STMicroelectronics` pinned
+  to the matching repo/tag, or the official **versioned** docs. Memory is a hint, not a
+  source. (For pack-managed HAL: resolve the submodule SHA at the FW tag, then grep the
+  `stm32<fam>xx_hal_driver` repo at that SHA — e.g. `HAL_OSPI_DLYB_Cfg` does **not**
+  exist in STM32H7 HAL.)
+- When unconfirmable: **say so**, then gather it from an authoritative source (ST/ARM,
+  the part RM/datasheet) for that **specific version**, and only then advise. Offer
+  version-appropriate fallbacks (older API / register-level), each verified.
+
+## Graphify-First Gate — start project analysis ONLY after graphify 🔒
+
+For ≥3 `.c` file / project analysis ("review my project / is there a bug / analyze this
+repo"), build the graphify code-map FIRST (`graphify update <project>` → verify
+`<project>/graphify-out/graph.json` on disk) BEFORE any findings, file-by-file reading,
+or subagent review. Do **not** bypass graphify with direct full-file reads or parallel
+subagents — that discards the call-graph diff and the ~7–70× token saving. **Use the
+output (query-first):** read `GRAPH_REPORT.md` (God Nodes = race/shared-state suspects;
+Surprising Connections = bug candidates), then `graphify query`/`affected`/`path` to pull
+suspect regions, walk node → `file:line` → verify/cancel against source. Edge tags
+`EXTRACTED` (found) vs `INFERRED`/`AMBIGUOUS` (guessed → verify, don't trust). Single-file
+snippet → skip; user declines install → reduced no-graph review, stated. Full guide:
+[ref-graphify.md](ref-graphify.md).
+
 ## Code Analysis — Graphify Follow-Up
 
 The graphify auto-run procedure is in [SKILL.md](SKILL.md) §"Step 1 —
