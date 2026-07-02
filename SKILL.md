@@ -1920,6 +1920,7 @@ See [stm32-families.md](stm32-families.md) for:
 | File | Contents |
 |------|----------|
 | [stm32-families.md](stm32-families.md) | Family catalog, HAL repos, CMSIS, RTX5 config |
+| [ref-st-github-map.md](ref-st-github-map.md) | ST/ARM GitHub repo catalog, `gh` runtime-lookup recipes (§8), known-wrong HAL names, family-detection gotchas (§9) |
 | [ref-communication-protocols.md](ref-communication-protocols.md) | I2C, SPI DMA, UART ring buffer, FDCAN |
 | [ref-qspi-octospi-highspeed.md](ref-qspi-octospi-highspeed.md) | QSPI/OCTOSPI high-speed: sample shift, DLYB, dummy cycles |
 | [ref-adc-timer.md](ref-adc-timer.md) | ADC calibration, DMA circular, oversampling, PWM, encoder, HRTIM |
