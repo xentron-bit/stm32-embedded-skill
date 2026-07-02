@@ -19,7 +19,7 @@ This skill does **not** memorize HAL/CMSIS API. Memorization causes drift
 
 **Workflow for any HAL/RTOS code you produce:**
 ```
-1. Need an API name? → grep ref-st-github-map.md §9 for known-wrong names
+1. Need an API name? → grep ref-st-github-map.md §8 "Sık yanılan HAL isimleri" for known-wrong names
 2. Not in §9? → gh search code '<name>' --owner=STMicroelectronics --extension=c
 3. ≥1 hit → use it (and cite the path in your code comment)
 4. 0 hits → the name is wrong; ask user for family or search variants
@@ -140,28 +140,33 @@ User request
 1. Mode = A (quick Q)?         ──► Answer in ≤5 lines. STOP.
    │
    ▼
-2. Mode = B (review)?
+2. Mode = B+ (project review)? — dizin/repo işaret edildi, ≥3 .c dosyası,
+   ya da "projemi analiz et / bug var mı / review this repo" (Faz 0 tetikleri)
+     ──► 9-phase Mode B+ pipeline (Faz 0–8). Graphify-First Gate uygulanır. STOP.
+   │
+   ▼
+3. Mode = B (single-file review, <200 LOC)?
      │
      ▼
-   2a. Detect MCU + silicon rev (ask if unknown)
-   2b. Open ref-stm32-errata.md, list relevant errata IDs (≤3 lines)
-   2c. Scope ≥3 .c files?  YES → bash: [ -f graphify-out/GRAPH_REPORT.md ] || Skill(graphify, <dir>)
-                            NO  → skip graphify
-   2d. Apply Code Review Checklist filtered by triage rules (see §Code Review)
-   2e. Emit findings via template (above)
+   3a. Detect MCU + silicon rev (ask if unknown)
+   3b. Open ref-stm32-errata.md, list relevant errata IDs (≤3 lines)
+   3c. Skip graphify — tek dosya/snippet için graf kurulmaz
+       (≥3 .c dosyası zaten adım 2'de B+'ya yönlendi)
+   3d. Apply Code Review Checklist filtered by triage rules (see §Code Review)
+   3e. Emit findings via template (above)
    │
    ▼
-3. Mode = C (implement)?
+4. Mode = C (implement)?
      │
      ▼
-   3a. If ambiguous: 1-2 Context Interview questions (see §Context Interview)
-   3b. Otherwise: code first, 5-phase summary after
+   4a. If ambiguous: 1-2 Context Interview questions (see §Context Interview)
+   4b. Otherwise: code first, 5-phase summary after
    │
    ▼
-4. Mode = D (debug)?  ──► Walk fault dump / CFSR. Ask for missing data.
+5. Mode = D (debug)?  ──► Walk fault dump / CFSR. Ask for missing data.
    │
    ▼
-5. Mode = E (new/uncovered ST part)? ──► Run Self-Update pipeline (§🆕). Research GitHub-first, write ref-*.md, register in all indexes.
+6. Mode = E (new/uncovered ST part)? ──► Run Self-Update pipeline (§🆕). Research GitHub-first, write ref-*.md, register in all indexes.
 ```
 
 ### Response language
@@ -282,7 +287,7 @@ derse, **diğer tüm Faz'lardan ÖNCE** şu prosedür çalışır:
 "Bu finding doğrulanmazsa ikinci olasılık: [<X>, <CFSR ile ayırt edilir>]"
 Üçüncü olasılık bile yazma — gürültü yapma.
 
-### Pipeline Overview (9 phases)
+### Pipeline Overview (9 phases = Faz 0–8; Faz 1.5 / 1.5b, Faz 1'in alt-adımlarıdır)
 
 ```
 [Faz 0] Mode B+ tetiklendi mi?
@@ -931,7 +936,7 @@ Priority 0: Idle + watchdog pet
 ```c
 // Thread definition — prefer static allocation
 static uint64_t task_stack[256];              // 64-bit aligned
-static osStaticThreadDef_t task_cb;
+static osRtxThread_t task_cb;   // canonical RTX5 CB type (rtx_os.h) — `osStaticThreadDef_t` is NOT a CMSIS-RTOS2 type
 const osThreadAttr_t task_attr = {
     .name       = "ctrl",
     .stack_mem  = task_stack,
@@ -993,12 +998,16 @@ HAL_NVIC_SetPriority(TIM1_UP_IRQn,  2, 0);   // pure HW ISR, no RTOS
 ### Peripheral Driver Pattern (LL preferred over HAL for RT code)
 
 ```c
-// GOOD: LL driver — zero overhead, direct register access
+// GOOD: LL driver — zero overhead, direct register access.
+// Spins are BOUNDED (Iron Rule: timeout on every peripheral wait).
+#define SPI_SPIN_GUARD  10000U
 static inline HAL_StatusTypeDef spi_xfer_byte(uint8_t tx, uint8_t *rx)
 {
-    while (!LL_SPI_IsActiveFlag_TXE(SPI1));
+    uint32_t guard = SPI_SPIN_GUARD;
+    while (!LL_SPI_IsActiveFlag_TXE(SPI1))  { if (--guard == 0U) return HAL_TIMEOUT; }
     LL_SPI_TransmitData8(SPI1, tx);
-    while (!LL_SPI_IsActiveFlag_RXNE(SPI1));
+    guard = SPI_SPIN_GUARD;
+    while (!LL_SPI_IsActiveFlag_RXNE(SPI1)) { if (--guard == 0U) return HAL_TIMEOUT; }
     *rx = LL_SPI_ReceiveData8(SPI1);
     return HAL_OK;
 }
@@ -1103,10 +1112,12 @@ static volatile uint32_t wdg_checklist;
 #define WDG_TASK_SENSOR BIT(2)
 #define WDG_ALL_TASKS   (WDG_TASK_CTRL | WDG_TASK_COMMS | WDG_TASK_SENSOR)
 
-// Each task periodically sets its bit
+// Each task periodically sets its bit — ATOMICALLY. A plain `|=` is a
+// LDR/ORR/STR read-modify-write: racing with the monitor's clear it can
+// write back stale bits → watchdog fed while another task is dead.
 void ctrl_task(void *arg) {
     for (;;) {
-        wdg_checklist |= WDG_TASK_CTRL;
+        __atomic_fetch_or(&wdg_checklist, WDG_TASK_CTRL, __ATOMIC_RELAXED);
         // ... work ...
         osDelay(10);
     }
@@ -1115,8 +1126,8 @@ void ctrl_task(void *arg) {
 // Watchdog monitor task (highest priority)
 void wdg_task(void *arg) {
     for (;;) {
-        if ((wdg_checklist & WDG_ALL_TASKS) == WDG_ALL_TASKS) {
-            wdg_checklist = 0;
+        uint32_t alive = __atomic_exchange_n(&wdg_checklist, 0U, __ATOMIC_RELAXED);
+        if ((alive & WDG_ALL_TASKS) == WDG_ALL_TASKS) {
             HAL_IWDG_Refresh(&hiwdg);   // pet only when ALL tasks alive
         }
         osDelay(IWDG_FEED_PERIOD_MS);
