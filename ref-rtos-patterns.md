@@ -26,6 +26,7 @@ void vSensorTask(void *pvParameters) {
 ## ISR → Task (semaphore from ISR)
 
 ```c
+__attribute__((used))   /* LTO guard — Keil AC6 can strip weak-callback overrides */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
     BaseType_t woken = pdFALSE;
     xSemaphoreGiveFromISR(xDataReadySemaphore, &woken);
@@ -136,6 +137,7 @@ static SemaphoreHandle_t xDMASem;
 xDMASem = xSemaphoreCreateBinary();   // initially NOT available
 
 // ISR gives — wakes the waiting task
+__attribute__((used))
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
 {
     BaseType_t woken = pdFALSE;
@@ -164,6 +166,7 @@ static SemaphoreHandle_t xCANRxSem;
 xCANRxSem = xSemaphoreCreateCounting(8, 0);
 
 // ISR: each frame gives once (count++)
+__attribute__((used))
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t flags)
 {
     BaseType_t woken = pdFALSE;
@@ -325,6 +328,7 @@ static QueueHandle_t xUartQueue;
 xUartQueue = xQueueCreate(UART_QUEUE_LEN, sizeof(UartFrame_t));
 
 // In UART IDLE ISR callback
+__attribute__((used))
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *h, uint16_t size)
 {
     UartFrame_t frame;
